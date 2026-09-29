@@ -1,0 +1,38 @@
+name: Windows Word runner connection check
+on:
+  workflow_dispatch:
+
+jobs:
+  word-connection:
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Verify interactive Microsoft Word and page count
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $word = $null
+          $doc = $null
+          try {
+            $word = New-Object -ComObject Word.Application
+            $word.Visible = $false
+            $word.DisplayAlerts = 0
+            $doc = $word.Documents.Add()
+            $doc.Content.Text = 'Word runner connection check'
+            $doc.Repaginate()
+            $pages = $doc.ComputeStatistics(2)
+            if ($pages -lt 1) { throw "Word returned invalid page count: $pages" }
+            Write-Host "PASS: Microsoft Word $($word.Version); sample document pages = $pages"
+          }
+          finally {
+            if ($null -ne $doc) {
+              $doc.Close(0)
+              [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($doc)
+            }
+            if ($null -ne $word) {
+              $word.Quit()
+              [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($word)
+            }
+          }
