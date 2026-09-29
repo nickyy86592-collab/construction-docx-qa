@@ -1,14 +1,9 @@
 name: Windows Word runner connection check
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/word-runner-check.yml'
 
 jobs:
   word-connection:
-    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Run one-time Word connection probe'
     runs-on: [self-hosted, Windows, X64, word-audit]
     timeout-minutes: 10
     permissions:
