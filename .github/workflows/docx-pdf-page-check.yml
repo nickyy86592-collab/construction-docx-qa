@@ -1,0 +1,76 @@
+name: DOCX PDF page preflight
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pdf_page_gate.py'
+      - 'smoke_test.py'
+      - '.github/workflows/docx-pdf-page-check.yml'
+  workflow_dispatch:
+    inputs:
+      docx_path:
+        description: 'Path to DOCX already in this private repository (for example input/draft.docx)'
+        required: true
+        type: string
+      body_target:
+        description: 'Target BODY pages, excluding cover/front matter'
+        required: true
+        default: '50'
+        type: string
+      tolerance:
+        description: 'Accepted page difference'
+        required: true
+        default: '1'
+        type: string
+      front_pages:
+        description: 'Pages excluded before the body'
+        required: true
+        default: '1'
+        type: string
+jobs:
+  smoke:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install renderer, Chinese fonts and test dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice-writer poppler-utils fonts-noto-cjk fonts-wqy-microhei python3-docx
+          fc-cache -f
+      - name: Exercise PASS and FAIL paths with a generated sample
+        run: python3 smoke_test.py
+  preflight:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LibreOffice, Poppler and Chinese fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice-writer poppler-utils fonts-noto-cjk fonts-wqy-microhei
+          fc-cache -f
+      - name: Render and count pages
+        id: check
+        continue-on-error: true
+        env:
+          DOCX_PATH: ${{ inputs.docx_path }}
+          BODY_TARGET: ${{ inputs.body_target }}
+          TOLERANCE: ${{ inputs.tolerance }}
+          FRONT_PAGES: ${{ inputs.front_pages }}
+        run: |
+          python3 pdf_page_gate.py "$DOCX_PATH" --body-target "$BODY_TARGET" --tolerance "$TOLERANCE" --front-pages "$FRONT_PAGES" --outdir qa-output
+      - name: Upload PDF and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docx-pdf-page-preflight
+          path: qa-output/
+          if-no-files-found: warn
+      - name: Mark page gate
+        if: steps.check.outcome != 'success'
+        run: exit 1
