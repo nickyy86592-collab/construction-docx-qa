@@ -1,0 +1,48 @@
+{
+  "required_level1_titles": [
+    "工程概况",
+    "主要施工方法",
+    "拟投入的主要物资计划",
+    "拟投入的主要施工机械、设备计划",
+    "劳动力安排计划",
+    "确保工程质量的技术组织措施",
+    "确保安全生产的技术组织措施",
+    "确保工期的技术组织措施",
+    "确保文明施工的技术组织措施"
+  ],
+  "required_figures": [
+    {
+      "name": "施工功能分区示意图",
+      "keywords": [
+        "图1"
+      ],
+      "hard": true
+    },
+    {
+      "name": "进度横道图",
+      "keywords": [
+        "图2"
+      ],
+      "hard": true
+    }
+  ],
+  "required_real_photo_slots": [],
+  "font_rules": {
+    "body": {
+      "name_east_asia": "宋体",
+      "size_pt": 14
+    },
+    "heading1": {
+      "name_east_asia": "宋体",
+      "size_pt": 16
+    },
+    "heading2": {
+      "name_east_asia": "宋体",
+      "size_pt": 16
+    },
+    "heading3": {
+      "name_east_asia": "宋体",
+      "size_pt": 16
+    }
+  }
+}
