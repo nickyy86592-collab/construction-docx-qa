@@ -27,7 +27,9 @@ jobs:
         working-directory: web2-${{ github.run_id }}
         run: |
           New-Item -ItemType Directory -Force output/web2 | Out-Null
-          $changed = @(git diff-tree --no-commit-id --name-only -r $env:GITHUB_SHA)
+          $headers = @{ Authorization = "Bearer ${{ github.token }}"; Accept = "application/vnd.github+json" }
+          $commit = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/commits/$env:GITHUB_SHA"
+          $changed = @($commit.files | ForEach-Object { $_.filename })
           $stage = if ($changed -contains 'input/changfeng/stage-75.docx') { '75' } else { '40' }
           if ($changed -contains 'input/changfeng/design.docx') {
             & $env:AUDIT_PYTHON audit/changfeng/page_gate.py input/changfeng/design.docx --report output/web2/pages.json
