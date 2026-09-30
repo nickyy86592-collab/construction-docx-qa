@@ -2,7 +2,7 @@ name: Changfeng Word formal delivery audit
 on:
   push:
     branches: [main]
-    paths: ['input/changfeng/**']
+    paths: ['input/changfeng/**', 'audit/changfeng/**', '.github/workflows/changfeng-word-audit.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -34,7 +34,8 @@ jobs:
       - name: Export actual Microsoft Word layout
         if: always()
         shell: powershell
-        run: & $env:AUDIT_PYTHON audit/changfeng/export_pdf.py input/changfeng/design.docx output/changfeng/design-word.pdf
+        run: |
+          & $env:AUDIT_PYTHON audit/changfeng/export_pdf.py input/changfeng/design.docx output/changfeng/design-word.pdf
       - uses: actions/upload-artifact@v4
         if: always()
         with:
