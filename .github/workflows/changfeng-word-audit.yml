@@ -8,7 +8,7 @@ permissions:
   contents: read
 concurrency:
   group: changfeng-word-audit
-  cancel-in-progress: true
+  cancel-in-progress: false
 jobs:
   audit:
     runs-on: [self-hosted, Windows, X64, word-audit]
@@ -32,7 +32,7 @@ jobs:
           "page_exit=$pageExit delivery_exit=$deliveryExit" | Set-Content output/changfeng/exit-codes.txt
           if ($pageExit -ne 0 -or $deliveryExit -ne 0) { exit 1 }
       - name: Export actual Microsoft Word layout
-        if: always()
+        if: success() || failure()
         shell: powershell
         run: |
           & $env:AUDIT_PYTHON audit/changfeng/export_pdf.py input/changfeng/design.docx output/changfeng/design-word.pdf
