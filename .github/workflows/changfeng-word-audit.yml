@@ -17,27 +17,24 @@ jobs:
       PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Prepare Word COM dependency
+      - name: Prepare isolated Python and Word COM
         shell: powershell
-        run: python -m pip install pywin32
+        run: audit/changfeng/prepare_python.ps1
       - name: Run original project hard audits
         id: audits
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force output/changfeng | Out-Null
-          python audit/changfeng/page_gate.py input/changfeng/design.docx --report output/changfeng/pages.json
+          & $env:AUDIT_PYTHON audit/changfeng/page_gate.py input/changfeng/design.docx --report output/changfeng/pages.json
           $pageExit = $LASTEXITCODE
-          python audit/changfeng/delivery_gate.py input/changfeng/design.docx --rules audit/changfeng/rules.json --report output/changfeng/delivery.json
+          & $env:AUDIT_PYTHON audit/changfeng/delivery_gate.py input/changfeng/design.docx --rules audit/changfeng/rules.json --report output/changfeng/delivery.json
           $deliveryExit = $LASTEXITCODE
           "page_exit=$pageExit delivery_exit=$deliveryExit" | Set-Content output/changfeng/exit-codes.txt
           if ($pageExit -ne 0 -or $deliveryExit -ne 0) { exit 1 }
       - name: Export actual Microsoft Word layout
         if: always()
         shell: powershell
-        run: python audit/changfeng/export_pdf.py input/changfeng/design.docx output/changfeng/design-word.pdf
+        run: & $env:AUDIT_PYTHON audit/changfeng/export_pdf.py input/changfeng/design.docx output/changfeng/design-word.pdf
       - uses: actions/upload-artifact@v4
         if: always()
         with:
