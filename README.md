@@ -1,12 +1,51 @@
-# DOCX PDF 页数预检（GitHub Actions）
+# Construction DOCX QA
 
-此工具在 GitHub Actions 的 Ubuntu 运行器安装 LibreOffice、Poppler 和中文字体，将 DOCX 转 PDF，统计正文页数，并输出 PDF、`report.json`、`report.txt`。**不是 Microsoft Word 实测，不代替原 Word 硬审脚本的 PASS。**
+本仓库用于施工组织设计 DOCX 的版式与页数校验。当前长丰义井镇项目同时保留三条通道：
 
-## 使用
+1. **阶段 Microsoft Word 页数实测**：用于正文编制约 40% / 75% 时校准后续篇幅，不执行最终 50±1 页硬审。
+2. **最终 Microsoft Word 正式交付硬审**：运行项目页数硬审 + 通用正式交付硬审，并导出 Word 实际版式 PDF。
+3. **LibreOffice PDF 页数预检**：仅作云端预检，不代替 Microsoft Word 的最终结果。
 
-1. 将本包的 `pdf_page_gate.py`、`smoke_test.py`、`.github/workflows/docx-pdf-page-check.yml` 放到**私有** GitHub 仓库相同路径。代码推送后自动用一次性示例运行自测。
-2. 将要检测的 DOCX 放在该私有仓库，例如 `input/draft.docx`。投标文件不应放入公开仓库。
-3. 在仓库的 Actions → `DOCX PDF page preflight` → Run workflow，输入路径、正文目标页数、容差、前置页数。长丰义井镇的已知要求：正文目标 50、容差 1、前置 1。
-4. 运行完成后下载 `docx-pdf-page-preflight` 工件，查看 PDF 和报告。若本地 Microsoft Word 的分页与 PDF 不同，以 Word 实际分页为准。
+## 长丰义井镇：阶段 Word 实测
 
-本工具只检查 PDF 页数并给出标题/强制分页/横版线索；不会假称完成原版式硬审，也不会把 37 页稿自动补成 50 页。每次修改文稿后须重新运行。若文档使用特殊字体，仍需核对所用字体和字体替换情况。
+阶段页数的目标值、容差和封面/目录排除规则**唯一读取**：
+
+`audit/changfeng/page_gate.py`
+
+因此阶段实测不会另维护一份“50页”参数。
+
+阶段稿固定使用：
+
+- 约 40%：`input/changfeng/stage-40.docx`
+- 约 75%：`input/changfeng/stage-75.docx`
+- 最终稿：`input/changfeng/design.docx`
+
+将阶段稿更新到对应路径后，会自动触发：
+
+`Changfeng Word stage page measurement`
+
+Windows 自托管 runner 会调用本机 Microsoft Word 重新分页，产出阶段 JSON/TXT 报告。报告中的 `page_source` 必须为 `microsoft_word`。
+
+阶段报告仅用于校准后续章节容量；粗略线性投影不是硬性页数判定，不能机械凑页。
+
+## 长丰义井镇：最终正式交付硬审
+
+最终稿仍放在：
+
+`input/changfeng/design.docx`
+
+现有工作流 `Changfeng Word formal delivery audit` 保持不变，继续运行项目页数硬审和通用正式交付硬审。只有最终稿才执行正式页数 PASS/FAIL。
+
+## Windows 自托管 runner
+
+阶段实测和最终硬审共用现有 Windows runner 标签：
+
+`self-hosted, Windows, X64, word-audit`
+
+runner 窗口显示 `Listening for Jobs` 时才在线。
+
+本地原先用于配置 runner 的 ZIP 安装包，在已经成功解压、配置并能稳定接单后可以删除 ZIP 本身；**不要删除当前正在使用的已解压 runner 文件夹，也不要删除日常启动所用的 `start-word-runner.cmd`。**
+
+## LibreOffice PDF 预检
+
+仓库仍保留旧的 `DOCX PDF page preflight`。它只作辅助检查，不代替 Microsoft Word 阶段校准或最终硬审。
