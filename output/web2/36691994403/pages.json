@@ -1,0 +1,26 @@
+{
+  "audit_type": "project_page_count_gate",
+  "audited_at": "2026-09-30T09:55:43+01:00",
+  "document": "C:\\actions-runner\\_work\\construction-docx-qa\\construction-docx-qa\\web2-36691994403\\input\\changfeng\\design.docx",
+  "status": "PASS",
+  "rule": {
+    "body_pages_target": 50,
+    "page_tolerance": 1,
+    "body_pages_allowed_range": [
+      49,
+      51
+    ],
+    "front_matter_pages_excluded": 1,
+    "front_matter_definition": "第1页为封面 + 一级目录",
+    "body_start_page": 2,
+    "total_pages_allowed_range": [
+      50,
+      52
+    ]
+  },
+  "actual": {
+    "word_total_pages": 50,
+    "excluded_front_matter_pages": 1,
+    "body_pages": 49
+  }
+}
