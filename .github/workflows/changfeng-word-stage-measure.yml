@@ -1,0 +1,93 @@
+name: Changfeng Word stage page measurement
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'input/changfeng/stage-40.docx'
+      - 'input/changfeng/stage-75.docx'
+  workflow_dispatch:
+    inputs:
+      stage_percent:
+        description: '阶段百分比'
+        required: true
+        type: choice
+        options:
+          - '40'
+          - '75'
+        default: '40'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: changfeng-word-stage-measure
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: stage-${{ github.run_id }}
+    env:
+      PYTHONUTF8: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: stage-${{ github.run_id }}
+
+      - name: Prepare isolated Python and Word COM
+        id: runtime
+        shell: powershell
+        run: audit/changfeng/prepare_python.ps1
+
+      - name: Resolve stage input
+        id: resolve
+        shell: powershell
+        run: |
+          $stage = ''
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $stage = '${{ inputs.stage_percent }}'
+          } else {
+            $changed = @(git diff-tree --no-commit-id --name-only -r $env:GITHUB_SHA)
+            $has40 = $changed -contains 'input/changfeng/stage-40.docx'
+            $has75 = $changed -contains 'input/changfeng/stage-75.docx'
+            if ($has40 -and $has75) {
+              throw '同一提交同时修改 stage-40.docx 和 stage-75.docx，无法确定本次阶段。请分开提交。'
+            } elseif ($has75) {
+              $stage = '75'
+            } elseif ($has40) {
+              $stage = '40'
+            } else {
+              throw '未检测到阶段稿路径。'
+            }
+          }
+
+          $doc = "input/changfeng/stage-$stage.docx"
+          if (-not (Test-Path $doc)) {
+            throw "阶段稿不存在：$doc"
+          }
+
+          "STAGE_PERCENT=$stage" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "STAGE_DOC=$doc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "STAGE_PERCENT=$stage"
+          Write-Host "STAGE_DOC=$doc"
+
+      - name: Measure with Microsoft Word
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force output/changfeng | Out-Null
+          $json = "output/changfeng/stage-$env:STAGE_PERCENT-word-pages.json"
+          $txt  = "output/changfeng/stage-$env:STAGE_PERCENT-word-pages.txt"
+          & $env:AUDIT_PYTHON audit/changfeng/stage_measure.py $env:STAGE_DOC --stage-percent $env:STAGE_PERCENT --report $json --text-report $txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: changfeng-word-stage-${{ env.STAGE_PERCENT }}-${{ github.run_id }}
+          path: stage-${{ github.run_id }}/output/changfeng/
+          if-no-files-found: error
