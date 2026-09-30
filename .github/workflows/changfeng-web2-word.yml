@@ -1,0 +1,54 @@
+name: Changfeng web2 isolated Word QA
+on:
+  push:
+    branches: ['codex/changfeng-web2-20260930']
+    paths: ['input/changfeng/*.docx', '.github/workflows/changfeng-web2-word.yml']
+permissions:
+  contents: write
+concurrency:
+  group: changfeng-web2-word
+  cancel-in-progress: false
+jobs:
+  audit:
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: web2-${{ github.run_id }}
+      - name: Prepare Word COM
+        shell: powershell
+        working-directory: web2-${{ github.run_id }}
+        run: audit/changfeng/prepare_python.ps1
+      - name: Measure or audit current snapshot
+        shell: powershell
+        working-directory: web2-${{ github.run_id }}
+        run: |
+          New-Item -ItemType Directory -Force output/web2 | Out-Null
+          $changed = @(git diff-tree --no-commit-id --name-only -r $env:GITHUB_SHA)
+          $stage = if ($changed -contains 'input/changfeng/stage-75.docx') { '75' } else { '40' }
+          if ($changed -contains 'input/changfeng/design.docx') {
+            & $env:AUDIT_PYTHON audit/changfeng/page_gate.py input/changfeng/design.docx --report output/web2/pages.json
+            $pe = $LASTEXITCODE
+            & $env:AUDIT_PYTHON audit/changfeng/delivery_gate.py input/changfeng/design.docx --rules audit/changfeng/rules.json --report output/web2/delivery.json
+            $de = $LASTEXITCODE
+            & $env:AUDIT_PYTHON audit/changfeng/export_pdf.py input/changfeng/design.docx output/web2/design-word.pdf
+            "page_exit=$pe delivery_exit=$de" | Set-Content output/web2/exit-codes.txt
+          } elseif (Test-Path "input/changfeng/stage-$stage.docx") {
+            & $env:AUDIT_PYTHON audit/changfeng/stage_measure.py "input/changfeng/stage-$stage.docx" --stage-percent $stage --report "output/web2/stage-$stage-word-pages.json" --text-report "output/web2/stage-$stage-word-pages.txt"
+          }
+      - name: Publish reports directly to isolated branch
+        if: always()
+        shell: powershell
+        working-directory: web2-${{ github.run_id }}
+        env:
+          REPORT_TOKEN: ${{ github.token }}
+        run: |
+          $headers = @{ Authorization = "Bearer $env:REPORT_TOKEN"; Accept = 'application/vnd.github+json' }
+          foreach ($file in Get-ChildItem output/web2 -File -ErrorAction SilentlyContinue) {
+            $path = "output/web2/$env:GITHUB_RUN_ID/$($file.Name)"
+            $body = @{ message = "Word report $env:GITHUB_RUN_ID"; branch = $env:GITHUB_REF_NAME; content = [Convert]::ToBase64String([IO.File]::ReadAllBytes($file.FullName)) } | ConvertTo-Json -Compress
+            Invoke-RestMethod -Method Put -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/contents/$path" -Headers $headers -ContentType 'application/json' -Body $body | Out-Null
+          }
