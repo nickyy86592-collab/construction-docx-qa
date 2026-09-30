@@ -13,11 +13,17 @@ jobs:
   audit:
     runs-on: [self-hosted, Windows, X64, word-audit]
     timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: audit-${{ github.run_id }}
     env:
       PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: audit-${{ github.run_id }}
       - name: Prepare isolated Python and Word COM
+        id: runtime
         shell: powershell
         run: audit/changfeng/prepare_python.ps1
       - name: Run original project hard audits
@@ -32,7 +38,7 @@ jobs:
           "page_exit=$pageExit delivery_exit=$deliveryExit" | Set-Content output/changfeng/exit-codes.txt
           if ($pageExit -ne 0 -or $deliveryExit -ne 0) { exit 1 }
       - name: Export actual Microsoft Word layout
-        if: success() || failure()
+        if: (success() || failure()) && steps.runtime.outcome == 'success'
         shell: powershell
         run: |
           & $env:AUDIT_PYTHON audit/changfeng/export_pdf.py input/changfeng/design.docx output/changfeng/design-word.pdf
@@ -40,5 +46,5 @@ jobs:
         if: always()
         with:
           name: changfeng-word-audit-${{ github.run_id }}
-          path: output/changfeng/
+          path: audit-${{ github.run_id }}/output/changfeng/
           if-no-files-found: error
