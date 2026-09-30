@@ -1,0 +1,1788 @@
+{
+  "audit_version": "1.3.0",
+  "document": "C:\\actions-runner\\_work\\construction-docx-qa\\construction-docx-qa\\web2-36689952479\\input\\changfeng\\design.docx",
+  "document_sha256": "8b6c4899483017914572f168796316bc824e9d4be8517bba0c93232282cb875c",
+  "audited_at": "2026-09-30T09:30:44+01:00",
+  "delivery_status": "FAIL",
+  "hard_failure_count": 1,
+  "rules": {
+    "front_page": 1,
+    "body_start_page": 2,
+    "allow_front_matter_break": true,
+    "hard_fail_on_mechanical_structure": true,
+    "min_chapters_for_mechanical_check": 3,
+    "required_level1_titles": [
+      "第一章 工程概况",
+      "第二章 主要施工方法",
+      "第三章 拟投入的主要物资计划",
+      "第四章 拟投入的主要施工机械、设备计划",
+      "第五章 劳动力安排计划",
+      "第六章 确保工程质量的技术组织措施",
+      "第七章 确保安全生产的技术组织措施",
+      "第八章 确保工期的技术组织措施",
+      "第九章 确保文明施工的技术组织措施"
+    ],
+    "required_figures": [
+      {
+        "name": "施工功能分区示意图",
+        "keywords": [
+          "图1"
+        ],
+        "hard": true
+      },
+      {
+        "name": "进度横道图",
+        "keywords": [
+          "图2"
+        ],
+        "hard": true
+      }
+    ],
+    "required_real_photo_slots": [],
+    "font_rules": {
+      "body": {
+        "name_east_asia": "宋体",
+        "size_pt": 14
+      },
+      "heading1": {
+        "name_east_asia": "宋体",
+        "size_pt": 16
+      },
+      "heading2": {
+        "name_east_asia": "宋体",
+        "size_pt": 16
+      },
+      "heading3": {
+        "name_east_asia": "宋体",
+        "size_pt": 16
+      }
+    },
+    "low_content_page_char_threshold": 30
+  },
+  "checks": [
+    {
+      "name": "项目硬审参数完整性",
+      "status": "PASS",
+      "message": "项目敏感规则已明确；空列表/空字典表示已确认无额外硬性要求。",
+      "details": null
+    },
+    {
+      "name": "导航窗格_标题大纲级别",
+      "status": "PASS",
+      "message": "三级标题均使用对应 Word 大纲级别。",
+      "details": null
+    },
+    {
+      "name": "标题样式_语法一致性",
+      "status": "PASS",
+      "message": "Word 1–3 级大纲标题均符合规定文字格式。",
+      "details": null
+    },
+    {
+      "name": "正文起始页",
+      "status": "PASS",
+      "message": "首个正文一级标题位于第 2 页，且第 2 页存在后续正文/图表内容。",
+      "details": {
+        "first_heading_page": 2,
+        "has_follow_content_on_start_page": true
+      }
+    },
+    {
+      "name": "首页内容_目录不得进入导航窗格",
+      "status": "PASS",
+      "message": "首页未发现 Heading 1–3 大纲标题。",
+      "details": null
+    },
+    {
+      "name": "首页内容_仅封面及一级目录",
+      "status": "PASS",
+      "message": "首页未发现二级/三级标题格式内容。",
+      "details": null
+    },
+    {
+      "name": "首页封面信息",
+      "status": "PASS",
+      "message": "首页一级目录之前检测到有效封面信息。",
+      "details": [
+        "2026年义井镇曹店省级和美乡村中心村改厕治污、庭院环境整治提升、河沟渠塘疏浚清淤、公共环境整治提升、生活垃圾治理项目",
+        "施工组织设计",
+        "项目编号 2026ACCGZ50129",
+        "投标人（盖单位章）",
+        "目 录"
+      ]
+    },
+    {
+      "name": "首页一级目录_与正文一致",
+      "status": "PASS",
+      "message": "首页一级目录名称、数量及顺序与正文一级标题完全一致。",
+      "details": [
+        "第一章 工程概况",
+        "第二章 主要施工方法",
+        "第三章 拟投入的主要物资计划",
+        "第四章 拟投入的主要施工机械、设备计划",
+        "第五章 劳动力安排计划",
+        "第六章 确保工程质量的技术组织措施",
+        "第七章 确保安全生产的技术组织措施",
+        "第八章 确保工期的技术组织措施",
+        "第九章 确保文明施工的技术组织措施"
+      ]
+    },
+    {
+      "name": "首页目录后正文混入",
+      "status": "PASS",
+      "message": "首页一级目录区域未发现普通正文混入。",
+      "details": null
+    },
+    {
+      "name": "三级标题体系_层级完整性",
+      "status": "PASS",
+      "message": "正文已实际检测到一级、二级、三级三种标题层级。",
+      "details": {
+        "counts": {
+          "1": 9,
+          "2": 33,
+          "3": 95
+        }
+      }
+    },
+    {
+      "name": "招标文件一级章节",
+      "status": "PASS",
+      "message": "正文一级章节与招标文件清单完全一致。",
+      "details": {
+        "required": [
+          "第一章 工程概况",
+          "第二章 主要施工方法",
+          "第三章 拟投入的主要物资计划",
+          "第四章 拟投入的主要施工机械、设备计划",
+          "第五章 劳动力安排计划",
+          "第六章 确保工程质量的技术组织措施",
+          "第七章 确保安全生产的技术组织措施",
+          "第八章 确保工期的技术组织措施",
+          "第九章 确保文明施工的技术组织措施"
+        ],
+        "actual": [
+          "第一章 工程概况",
+          "第二章 主要施工方法",
+          "第三章 拟投入的主要物资计划",
+          "第四章 拟投入的主要施工机械、设备计划",
+          "第五章 劳动力安排计划",
+          "第六章 确保工程质量的技术组织措施",
+          "第七章 确保安全生产的技术组织措施",
+          "第八章 确保工期的技术组织措施",
+          "第九章 确保文明施工的技术组织措施"
+        ]
+      }
+    },
+    {
+      "name": "三级标题编号连续性",
+      "status": "PASS",
+      "message": "三级标题编号连续、层级关系正常。",
+      "details": null
+    },
+    {
+      "name": "机械化固定目录结构",
+      "status": "PASS",
+      "message": "未发现全篇统一固定 N×N 的明显机械化目录模式。",
+      "details": {
+        "level2_counts": [
+          2,
+          12,
+          2,
+          2,
+          2,
+          2,
+          4,
+          3,
+          4
+        ]
+      }
+    },
+    {
+      "name": "标题强制分页_PageBreakBefore",
+      "status": "PASS",
+      "message": "未发现标题段前强制分页。",
+      "details": null
+    },
+    {
+      "name": "正文手工分页符",
+      "status": "PASS",
+      "message": "正文中未发现手工分页符。",
+      "details": null
+    },
+    {
+      "name": "标题相关强制新页分节",
+      "status": "PASS",
+      "message": "未发现利用新页分节强制标题另起一页。",
+      "details": null
+    },
+    {
+      "name": "正文其他强制新页分节",
+      "status": "PASS",
+      "message": "未发现需人工确认的正文强制新页分节。",
+      "details": null
+    },
+    {
+      "name": "页面方向_全篇竖版",
+      "status": "PASS",
+      "message": "全部分节均为竖向页面，未发现横向页面。",
+      "details": null
+    },
+    {
+      "name": "空白页",
+      "status": "PASS",
+      "message": "未发现无内容空白页。",
+      "details": null
+    },
+    {
+      "name": "疑似大面积无意义留白",
+      "status": "PASS",
+      "message": "未发现明显低内容页。",
+      "details": null
+    },
+    {
+      "name": "必要图件_施工功能分区示意图",
+      "status": "PASS",
+      "message": "检测到“图1”且附近存在图形/表格对象。",
+      "details": null
+    },
+    {
+      "name": "必要图件_进度横道图",
+      "status": "PASS",
+      "message": "检测到“图2”且附近存在图形/表格对象。",
+      "details": null
+    },
+    {
+      "name": "实景图占位",
+      "status": "PASS",
+      "message": "已确认当前文档不存在‘缺真实素材但必须预留’的实景图项。",
+      "details": null
+    },
+    {
+      "name": "实景图_AI来源真实性",
+      "status": "WARN",
+      "message": "脚本不能仅凭 DOCX 可靠鉴别既有图片是否由 AI 生成；图片真实性仍需人工或素材来源记录确认。",
+      "details": null
+    },
+    {
+      "name": "招标文件字体规则",
+      "status": "FAIL",
+      "message": "发现字体/字号与招标文件参数不一致。",
+      "details": [
+        {
+          "text": "第一章 工程概况",
+          "page": 2,
+          "type": "heading1",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第一节 项目范围与履约目标",
+          "page": 2,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、工程范围及专业构成",
+          "page": 2,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、工期质量及交付目标",
+          "page": 3,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第二节 施工条件与总体组织",
+          "page": 3,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、分散工作面和专业接口",
+          "page": 3,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、项目机构与作业责任",
+          "page": 3,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、功能分区与临时设施",
+          "page": 4,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "四、开工前确认与放行程序",
+          "page": 4,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第二章 主要施工方法",
+          "page": 4,
+          "type": "heading1",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第一节 施工调查测量与先行工程",
+          "page": 4,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、复测与施工对象编号",
+          "page": 4,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、管线保护与居民通行先行",
+          "page": 5,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、拆除清理与临时排水",
+          "page": 5,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第二节 四池一地与GCE分散污水终端",
+          "page": 6,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、一户一档及系统高程核对",
+          "page": 6,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、厂家深化与首件样板",
+          "page": 6,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、基坑开挖基础与池体施工",
+          "page": 6,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "四、湿地滤料布水与通气安装",
+          "page": 7,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "五、密封检查回填与功能交付",
+          "page": 8,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第三节 DN100接户管与隔油池",
+          "page": 9,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、线路选择沟槽开挖及基础",
+          "page": 9,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、UPVC管接口与坡度控制",
+          "page": 9,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、隔油池安装与厨房灰水衔接",
+          "page": 10,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "四、通水检验与院坪恢复",
+          "page": 10,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第四节 沟渠池塘清淤与岸坡工程",
+          "page": 11,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、测量分段与施工方式选择",
+          "page": 11,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、导流抽排与机械机位",
+          "page": 11,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、分层清挖与底高程控制",
+          "page": 11,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "四、底泥分类利用与运输闭合",
+          "page": 12,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "五、松木桩护岸与岸坡整理",
+          "page": 13,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "六、断面复测与完工验收",
+          "page": 14,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第五节 雨水管检查井出水口与管涵",
+          "page": 14,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、排水系统复核和沟槽施工",
+          "page": 14,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、DN800管道吊装与柔性接口",
+          "page": 14,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、φ1500检查井与井盖安装",
+          "page": 15,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "四、八字出水口和φ0.5m管涵",
+          "page": 15,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "五、功能试验回填与道路接口",
+          "page": 15,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第六节 入户道路挡墙护栏与破除恢复",
+          "page": 16,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、结构分部位与施工段划分",
+          "page": 16,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、清表与路床处理",
+          "page": 16,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、级配碎石摊铺压实",
+          "page": 17,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "四、模板混凝土浇筑和防滑成型",
+          "page": 17,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "五、接缝切割养护与开放条件",
+          "page": 17,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "六、挡墙波形护栏及交工检查",
+          "page": 18,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第七节 庭院围栏菜园构筑物与步道",
+          "page": 19,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、现状界面保护与样板确认",
+          "page": 19,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、混凝土仿竹栅栏和网状栅栏",
+          "page": 19,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、青砖基础清水墙与拼花瓦",
+          "page": 20,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "四、压印地坪与侧石施工",
+          "page": 20,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第八节 墙面修缮与涂饰",
+          "page": 21,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、逐面检查与病害处理",
+          "page": 21,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、修补找平和腻子施工",
+          "page": 21,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、底漆面漆罩面与质量交接",
+          "page": 22,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第九节 通信管道光缆与杆线整治",
+          "page": 22,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、产权核对和割接准备",
+          "page": 22,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、管道与手孔井施工",
+          "page": 22,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、光缆敷设接续测试与拆杆",
+          "page": 23,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第十节 太阳能亮化与垃圾分类设施",
+          "page": 24,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、灯位基础和预埋控制",
+          "page": 24,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、灯具安装太阳能系统与亮灯移交",
+          "page": 24,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、垃圾亭桶及积分超市设施",
+          "page": 24,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第十一节 乔灌木水生植物与持续养护",
+          "page": 25,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、种植土和苗木验收",
+          "page": 25,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、栽植支撑和首期养护",
+          "page": 25,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、水生植物栽植与水位衔接",
+          "page": 26,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第十二节 冬雨期工艺调整与专业收口",
+          "page": 26,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、气象触发与湿作业保护",
+          "page": 26,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、分段验收与最终系统交接",
+          "page": 27,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第三章 拟投入的主要物资计划",
+          "page": 27,
+          "type": "heading1",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第一节 按施工流水组织供货",
+          "page": 27,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、物资需求与到货节点",
+          "page": 27,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、供应中断和替代管理",
+          "page": 28,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第二节 材料验收保管与追溯",
+          "page": 28,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、分批检验和不合格隔离",
+          "page": 28,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、仓储与现场领用",
+          "page": 29,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第四章 拟投入的主要施工机械、设备计划",
+          "page": 29,
+          "type": "heading1",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第一节 机械与作业面配置",
+          "page": 29,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、拟投入机械设备",
+          "page": 29,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、清淤运输与机位匹配",
+          "page": 30,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第二节 进退场维护与机具验收",
+          "page": 31,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、进场验收及操作管理",
+          "page": 31,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、共享设备调度与阶段退场",
+          "page": 31,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第五章 劳动力安排计划",
+          "page": 31,
+          "type": "heading1",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第一节 专业班组及阶段安排",
+          "page": 31,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、人员组织和拟投入计划",
+          "page": 31,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、产能分工与培训",
+          "page": 32,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第二节 动态调配与劳动保障",
+          "page": 33,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、偏差应对和多点管理",
+          "page": 33,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、实名制工资与职业保护",
+          "page": 33,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第六章 确保工程质量的技术组织措施",
+          "page": 33,
+          "type": "heading1",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第一节 质量责任和停检点",
+          "page": 33,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、分对象建立检验计划",
+          "page": 33,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、样板首件与检查权限",
+          "page": 34,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第二节 检测不符合处置与资料",
+          "page": 34,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、检测实施与真实性",
+          "page": 34,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、缺陷分析返修和复验",
+          "page": 35,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、分户分段资料与运维交付",
+          "page": 35,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第七章 确保安全生产的技术组织措施",
+          "page": 36,
+          "type": "heading1",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第一节 危险作业辨识与开工条件",
+          "page": 36,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、专项方案及分点责任",
+          "page": 36,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、安全技术交底和停复工",
+          "page": 37,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第二节 沟槽拆除吊装与高处作业",
+          "page": 37,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、沟槽与相邻建构筑物保护",
+          "page": 37,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、拆旧拆破和杆线拆除",
+          "page": 37,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、吊装木桩与登高作业",
+          "page": 38,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第三节 临水有限空间与临时用电",
+          "page": 38,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、清淤临水机械和救生",
+          "page": 38,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、井池有限空间作业",
+          "page": 39,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、临时用电消防和职业健康",
+          "page": 39,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第四节 应急处置和事件复盘",
+          "page": 40,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、分散工作面的报警与救援",
+          "page": 40,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、预警演练及恢复生产",
+          "page": 40,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第八章 确保工期的技术组织措施",
+          "page": 40,
+          "type": "heading1",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第一节 150日历天总体计划",
+          "page": 40,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、阶段目标与工作面顺序",
+          "page": 40,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、关键接口及里程碑",
+          "page": 41,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第二节 产能验证与滚动纠偏",
+          "page": 41,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、主要工程量和资源闭合",
+          "page": 41,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、周计划日报与偏差分析",
+          "page": 42,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第三节 协调保障与验收收尾",
+          "page": 42,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、前置协调和困难点位关闭",
+          "page": 42,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、分批验收和余项资源",
+          "page": 43,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第九章 确保文明施工的技术组织措施",
+          "page": 43,
+          "type": "heading1",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第一节 居民通行与现场秩序",
+          "page": 43,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、分段围护便道和交通疏导",
+          "page": 43,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、入户沟通和投诉处置",
+          "page": 44,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第二节 扬尘噪声泥水与垃圾",
+          "page": 44,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、源头抑尘与噪声控制",
+          "page": 44,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、清淤泥水和暂存区管理",
+          "page": 44,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "三、拆除建筑垃圾与生活垃圾分开",
+          "page": 45,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第三节 节约资源与生态保护",
+          "page": 45,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、水电材料和临时用地",
+          "page": 45,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、保留设施和水域植被保护",
+          "page": 45,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "第四节 分段清场与文明交付",
+          "page": 46,
+          "type": "heading2",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "一、工完场清和施工边界移交",
+          "page": 46,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        },
+        {
+          "text": "二、竣工环境验收和持续责任",
+          "page": 46,
+          "type": "heading3",
+          "mismatch": {
+            "name_east_asia": {
+              "expected": "宋体",
+              "actual": "+中文标题"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "本脚本不审核总页数/正文页数目标；页数要求由独立页数硬审脚本负责。",
+    "WARN/SKIP 不等于硬失败；只有 FAIL 会阻止正式交付。项目敏感参数未知、或已提供字体规则但未实际检查到任何段落时，会主动产生 FAIL，避免假 PASS。",
+    "正式版全篇必须保持竖向页面；任何横道图、平面图等均不得通过横向页面展示。",
+    "脚本不能单凭 DOCX 可靠鉴别既有实景图片是否由 AI 生成。"
+  ]
+}
