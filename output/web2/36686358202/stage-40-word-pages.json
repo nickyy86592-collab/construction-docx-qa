@@ -1,0 +1,30 @@
+{
+  "measurement_type": "microsoft_word_stage_page_measurement",
+  "measured_at": "2026-09-30T08:56:51+01:00",
+  "page_source": "microsoft_word",
+  "document": "C:\\actions-runner\\_work\\construction-docx-qa\\construction-docx-qa\\web2-36686358202\\input\\changfeng\\stage-40.docx",
+  "document_sha256": "7075d649d4b51ee931d1e6bc679c8c345db289678940011bcd87e8571022f489",
+  "status": "MEASURED",
+  "stage_percent": 40,
+  "project_rule_source": "C:\\actions-runner\\_work\\construction-docx-qa\\construction-docx-qa\\web2-36686358202\\audit\\changfeng\\page_gate.py",
+  "project_rule": {
+    "target_body_pages": 50,
+    "page_tolerance": 1,
+    "front_matter_pages_excluded": 1,
+    "allowed_final_body_pages": [
+      49,
+      51
+    ]
+  },
+  "actual": {
+    "word_total_pages": 17,
+    "word_body_pages": 16,
+    "word_version": "16.0"
+  },
+  "planning_reference": {
+    "linear_expected_body_pages_at_stage": 20.0,
+    "rough_linear_projected_final_body_pages": 40.0,
+    "advisory": "EXPAND_LATER_CONTENT",
+    "note": "阶段投影仅作篇幅校准参考；正式调整仍应结合评分权重、章节计划和图表占用，不得机械按线性比例凑页。"
+  }
+}
