@@ -8,7 +8,7 @@ permissions:
   contents: read
 concurrency:
   group: changfeng-word-audit
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   audit:
     runs-on: [self-hosted, Windows, X64, word-audit]

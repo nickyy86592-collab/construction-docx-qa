@@ -322,7 +322,7 @@ def check_front_page_and_body(doc, records: List[Dict[str, Any]], headings: List
         out.append(CheckResult("首页内容_目录不得进入导航窗格", "PASS", "首页未发现 Heading 1–3 大纲标题。"))
 
     front_range = get_page_range(doc, front, page_count)
-    front_text = clean_text(front_range.Text)
+    front_text = clean_text(front_range.Text.replace("\r", "\n"))
     front_lines = [normalize_spaces(x) for x in re.split(r"[\r\n]+", front_text) if normalize_spaces(x)]
 
     # 首页不得出现二级、三级标题格式内容。
