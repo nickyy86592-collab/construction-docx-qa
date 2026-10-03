@@ -1,9 +1,9 @@
 {
   "audit_version": "1.4.0",
   "layout_engine": "Microsoft Word",
-  "document": "C:\\actions-runner\\_work\\_temp\\changfeng-web3-37131239618\\design.docx",
-  "document_sha256": "242742ddab434f40e3d99517fb448144bd557d41c7212e4ea7d4e02cfc7d1c74",
-  "audited_at": "2026-10-03T15:54:53+01:00",
+  "document": "C:\\actions-runner\\_work\\_temp\\changfeng-web3-37131534051\\design.docx",
+  "document_sha256": "70c6d2591f49cb51e0535b2c4c7ea6db1d18e0b43ed68629b55494b13d8dfe29",
+  "audited_at": "2026-10-03T15:58:44+01:00",
   "delivery_status": "PASS",
   "hard_failure_count": 0,
   "rules": {
@@ -158,8 +158,8 @@
       "details": {
         "counts": {
           "1": 9,
-          "2": 34,
-          "3": 111
+          "2": 35,
+          "3": 114
         }
       }
     },
@@ -212,7 +212,7 @@
           6,
           4,
           3,
-          3
+          4
         ]
       }
     },
@@ -315,9 +315,9 @@
     {
       "name": "招标文件字体规则",
       "status": "PASS",
-      "message": "已按配置检查 656 个段落，字体规则通过。",
+      "message": "已按配置检查 666 个段落，字体规则通过。",
       "details": {
-        "checked_paragraphs": 656
+        "checked_paragraphs": 666
       }
     }
   ],
