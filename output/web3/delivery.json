@@ -1,11 +1,11 @@
 {
   "audit_version": "1.4.0",
   "layout_engine": "Microsoft Word",
-  "document": "C:\\actions-runner\\_work\\_temp\\changfeng-web3-37130934366\\design.docx",
-  "document_sha256": "04149fd7d3e7ca5d8a7fab21ac11e0513afec1442ab2de225a5dd3790c7a1dea",
-  "audited_at": "2026-10-03T15:49:07+01:00",
-  "delivery_status": "FAIL",
-  "hard_failure_count": 1,
+  "document": "C:\\actions-runner\\_work\\_temp\\changfeng-web3-37131239618\\design.docx",
+  "document_sha256": "242742ddab434f40e3d99517fb448144bd557d41c7212e4ea7d4e02cfc7d1c74",
+  "audited_at": "2026-10-03T15:54:53+01:00",
+  "delivery_status": "PASS",
+  "hard_failure_count": 0,
   "rules": {
     "front_page": 1,
     "body_start_page": 2,
@@ -260,31 +260,9 @@
     },
     {
       "name": "彩图前页大块留白_图片迁移",
-      "status": "FAIL",
-      "message": "发现高置信度图片迁移型大块页底留白；必须调整图片尺寸、插入位置或段落关系后重新 Word 渲染与复验。",
-      "details": [
-        {
-          "previous_document_page": 42,
-          "previous_body_page": 41,
-          "next_document_page": 43,
-          "next_body_page": 42,
-          "bottom_blank_height_pt": 381.9,
-          "bottom_blank_ratio": 0.5346,
-          "review_threshold_ratio": 0.3333,
-          "next_visual_top_ratio_of_body": 0.0,
-          "pre_visual_char_count": 0,
-          "visual": {
-            "kind": "InlineShape",
-            "anchor_start": 33087,
-            "top_pt": 70.8,
-            "height_pt": 472.65,
-            "width_pt": 391.15,
-            "bottom_pt": 543.45
-          },
-          "classification": "CONFIRMED_IMAGE_MIGRATION_RISK",
-          "reason": "上一页大块页底留白后，下一页靠近正文顶部即出现图片，且图片前文字很少。"
-        }
-      ]
+      "status": "PASS",
+      "message": "未发现高置信度图片迁移型大块页底留白。",
+      "details": null
     },
     {
       "name": "大块页底留白_待复核",
@@ -300,21 +278,9 @@
     },
     {
       "name": "彩图留白证据",
-      "status": "WARN",
-      "message": "已生成 Microsoft Word 版式 PDF；当前环境未生成逐页 PNG，请按报告页码在 PDF 中复核。",
-      "details": {
-        "layout_engine": "Microsoft Word",
-        "document_pages": [
-          42,
-          43
-        ],
-        "word_pdf": "delivery_evidence\\word_layout_evidence.pdf",
-        "png_screenshots": [],
-        "errors": [
-          "逐页PNG截图不可用：No module named 'fitz'"
-        ],
-        "note": "1/3为空白待审初始阈值，不是招标硬性要求。"
-      }
+      "status": "PASS",
+      "message": "未触发彩图相邻留白异常，无需生成相邻页证据截图。",
+      "details": null
     },
     {
       "name": "必要图件_施工功能分区示意图",
@@ -349,9 +315,9 @@
     {
       "name": "招标文件字体规则",
       "status": "PASS",
-      "message": "已按配置检查 652 个段落，字体规则通过。",
+      "message": "已按配置检查 656 个段落，字体规则通过。",
       "details": {
-        "checked_paragraphs": 652
+        "checked_paragraphs": 656
       }
     }
   ],
