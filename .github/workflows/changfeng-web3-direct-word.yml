@@ -51,9 +51,8 @@ jobs:
           Fetch-File 'input/web3/rules.json' 'rules.json'
           . ./prepare_python.ps1
           $python = Join-Path $env:RUNNER_TEMP 'changfeng-audit-python312/python.exe'
-          $event = Get-Content $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
-          $changed = @()
-          foreach ($commit in $event.commits) { $changed += $commit.added; $changed += $commit.modified }
+          $commitInfo = Invoke-RestMethod -Headers $headers -Uri "$api/commits/$sha"
+          $changed = @($commitInfo.files | ForEach-Object { $_.filename })
           $isSetup = $changed -contains '.github/workflows/changfeng-web3-direct-word.yml'
           $failed = $false
           foreach ($stage in @(40,75)) {
