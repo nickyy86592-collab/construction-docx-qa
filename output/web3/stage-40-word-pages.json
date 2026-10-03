@@ -1,12 +1,12 @@
 {
   "measurement_type": "microsoft_word_stage_page_measurement",
-  "measured_at": "2026-10-03T15:43:48+01:00",
+  "measured_at": "2026-10-03T15:54:02+01:00",
   "page_source": "microsoft_word",
-  "document": "C:\\actions-runner\\_work\\_temp\\changfeng-web3-37130609022\\stage-40.docx",
+  "document": "C:\\actions-runner\\_work\\_temp\\changfeng-web3-37131239618\\stage-40.docx",
   "document_sha256": "ad6bf63cb0648c3471a8530593ebe7eae93c2aaa174cf036c733bc128b06a349",
   "status": "MEASURED",
   "stage_percent": 40,
-  "project_rule_source": "C:\\actions-runner\\_work\\_temp\\changfeng-web3-37130609022\\page_gate.py",
+  "project_rule_source": "C:\\actions-runner\\_work\\_temp\\changfeng-web3-37131239618\\page_gate.py",
   "project_rule": {
     "target_body_pages": 50,
     "page_tolerance": 1,
