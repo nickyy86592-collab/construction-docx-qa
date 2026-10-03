@@ -44,6 +44,20 @@ jobs:
             $body = @{message="Record web3 Word result $path";content=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $taskDir $path)));branch='main'}
             if ($existing) { $body.sha = $existing.sha }
             Invoke-RestMethod -Method Put -Headers $headers -Uri $url -ContentType 'application/json' -Body ($body | ConvertTo-Json -Compress) | Out-Null
+            if ($path -eq 'design-word.pdf') {
+              $base64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $taskDir $path)))
+              $parts = 0
+              for ($offset=0; $offset -lt $base64.Length; $offset+=120000) {
+                $piece = "design-word-pdf-part-{0:D3}.txt" -f $parts
+                $length = [Math]::Min(120000,$base64.Length-$offset)
+                [IO.File]::WriteAllText((Join-Path $taskDir $piece),$base64.Substring($offset,$length),[Text.Encoding]::ASCII)
+                Save-Result $piece
+                $parts++
+              }
+              $manifest = @{parts=$parts;bytes=(Get-Item $path).Length;sha256=(Get-FileHash $path -Algorithm SHA256).Hash.ToLower()}
+              [IO.File]::WriteAllText((Join-Path $taskDir 'design-word-pdf-parts.json'),($manifest | ConvertTo-Json -Compress),[Text.Encoding]::UTF8)
+              Save-Result 'design-word-pdf-parts.json'
+            }
           }
           foreach ($file in @('prepare_python.ps1','stage_measure.py','page_gate.py','delivery_gate.py','export_pdf.py')) {
             Fetch-File "audit/changfeng/$file" $file
