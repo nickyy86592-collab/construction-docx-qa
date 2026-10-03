@@ -1,0 +1,82 @@
+name: Changfeng web3 direct Word calibration
+on:
+  push:
+    branches: [main]
+    paths: ['input/web3/**', '.github/workflows/changfeng-web3-direct-word.yml']
+permissions:
+  contents: write
+concurrency:
+  group: changfeng-web3-direct
+  cancel-in-progress: false
+jobs:
+  word:
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+      GH_JOB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Read immutable inputs through GitHub API and run Word
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          $repo = '${{ github.repository }}'
+          $sha = '${{ github.sha }}'
+          $api = "https://api.github.com/repos/$repo"
+          $headers = @{Authorization="Bearer $env:GH_JOB_TOKEN";Accept='application/vnd.github+json'}
+          $taskDir = Join-Path $env:RUNNER_TEMP "changfeng-web3-${{ github.run_id }}"
+          New-Item -ItemType Directory -Force $taskDir | Out-Null
+          Set-Location $taskDir
+          function Fetch-File($remote, $local) {
+            $url = "$api/contents/$($remote)?ref=$sha"
+            $obj = Invoke-RestMethod -Headers $headers -Uri $url
+            if ($obj.encoding -ne 'base64') { throw "Unexpected file encoding for $remote" }
+            $parent = Split-Path $local -Parent
+            if ($parent) { New-Item -ItemType Directory -Force $parent | Out-Null }
+            [IO.File]::WriteAllBytes((Join-Path $taskDir $local),[Convert]::FromBase64String($obj.content))
+          }
+          function Save-Result($path) {
+            $remote = "output/web3/$path"
+            $url = "$api/contents/$remote"
+            $existing = $null
+            try { $existing = Invoke-RestMethod -Headers $headers -Uri $url } catch { if ($_.Exception.Response.StatusCode.value__ -ne 404) {throw} }
+            $body = @{message="Record web3 Word result $path";content=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $taskDir $path)));branch='main'}
+            if ($existing) { $body.sha = $existing.sha }
+            Invoke-RestMethod -Method Put -Headers $headers -Uri $url -ContentType 'application/json' -Body ($body | ConvertTo-Json -Compress) | Out-Null
+          }
+          foreach ($file in @('prepare_python.ps1','stage_measure.py','page_gate.py','delivery_gate.py','export_pdf.py')) {
+            Fetch-File "audit/changfeng/$file" $file
+          }
+          Fetch-File 'input/web3/rules.json' 'rules.json'
+          . ./prepare_python.ps1
+          $python = Join-Path $env:RUNNER_TEMP 'changfeng-audit-python312/python.exe'
+          $event = Get-Content $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
+          $changed = @()
+          foreach ($commit in $event.commits) { $changed += $commit.added; $changed += $commit.modified }
+          $isSetup = $changed -contains '.github/workflows/changfeng-web3-direct-word.yml'
+          $failed = $false
+          foreach ($stage in @(40,75)) {
+            $remote = "input/web3/stage-$stage.docx"
+            if ($isSetup -or ($changed -contains $remote)) {
+              Fetch-File $remote "stage-$stage.docx"
+              & $python stage_measure.py "stage-$stage.docx" --stage-percent $stage --report "stage-$stage-word-pages.json" --text-report "stage-$stage-word-pages.txt"
+              if ($LASTEXITCODE -ne 0) { $failed=$true; continue }
+              & $python export_pdf.py "stage-$stage.docx" "stage-$stage-word.pdf"
+              Save-Result "stage-$stage-word-pages.json"
+              Save-Result "stage-$stage-word-pages.txt"
+              if (Test-Path "stage-$stage-word.pdf") { Save-Result "stage-$stage-word.pdf" }
+            }
+          }
+          if ($changed -contains 'input/web3/design.docx') {
+            Fetch-File 'input/web3/design.docx' 'design.docx'
+            & $python page_gate.py design.docx --report pages.json
+            $pageExit=$LASTEXITCODE
+            & $python delivery_gate.py design.docx --rules rules.json --report delivery.json
+            $deliveryExit=$LASTEXITCODE
+            & $python export_pdf.py design.docx design-word.pdf
+            foreach ($f in @('pages.json','delivery.json','design-word.pdf')) { if (Test-Path $f) { Save-Result $f } }
+            $p=Get-Content pages.json -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($pageExit -ne 0 -or $deliveryExit -ne 0 -or $p.actual.body_pages -gt 50) { $failed=$true }
+          }
+          if ($failed) { throw 'One or more Word measurements or audits failed; inspect published reports.' }
