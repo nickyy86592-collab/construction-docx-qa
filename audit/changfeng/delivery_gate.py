@@ -8,7 +8,7 @@
 - 使用 Windows Microsoft Word 实际排版结果定位首页、正文起始页、空白页等版式信息。
 - 不再审核“总页数/正文页数目标”；页数要求由独立页数硬审脚本负责。
 - 对首页一级目录、正文三级标题、连续排版、必要图件、
-  实景图占位、字体规则、Word 导航窗格、全篇竖向页面等进行硬审。
+  实景图占位、字体规则、Word 导航窗格、全篇竖向页面，以及图片迁移导致的大块页底留白等进行硬审。
 
 运行环境：
     Windows
@@ -53,6 +53,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 # -----------------------------
 WD_STATISTIC_PAGES = 2
 WD_ACTIVE_END_PAGE_NUMBER = 3
+WD_VERTICAL_POSITION_RELATIVE_TO_PAGE = 6
 WD_GOTO_PAGE = 1
 WD_GOTO_ABSOLUTE = 1
 WD_OUTLINE_BODY_TEXT = 10
@@ -78,6 +79,10 @@ DEFAULT_RULES: Dict[str, Any] = {
     "required_real_photo_slots": None,
     "font_rules": None,
     "low_content_page_char_threshold": 30,
+    # 通用版式待审阈值；不是招标页数参数。1/3仅用于触发图片迁移留白复核。
+    "bottom_whitespace_review_ratio": 1 / 3,
+    "next_page_visual_top_ratio": 0.30,
+    "next_page_pre_visual_char_limit": 140,
 }
 
 # 三级标题格式
@@ -701,6 +706,7 @@ def count_objects_on_page(doc, page_range) -> int:
 
 
 def check_blank_and_low_content_pages(doc, page_count: int, rules: Dict[str, Any]) -> List[CheckResult]:
+    """基础检查：整页空白与极低文字量页面。不能替代真实几何留白检查。"""
     blank: List[int] = []
     low: List[Dict[str, Any]] = []
     threshold = int(rules.get("low_content_page_char_threshold", 30))
@@ -713,12 +719,298 @@ def check_blank_and_low_content_pages(doc, page_count: int, rules: Dict[str, Any
         if len(compact) == 0 and obj_count == 0:
             blank.append(p)
         elif p not in (1, page_count) and len(compact) < threshold and obj_count == 0:
-            low.append({"page": p, "char_count": len(compact)})
+            low.append({"document_page": p, "char_count": len(compact)})
 
     return [
         CheckResult("空白页", "FAIL" if blank else "PASS", "发现无内容空白页。" if blank else "未发现无内容空白页。", blank or None),
-        CheckResult("疑似大面积无意义留白", "WARN" if low else "PASS", "存在正文页文字量异常偏低，建议人工确认是否由异常分页/段距造成。" if low else "未发现明显低内容页。", low or None),
+        CheckResult("低内容页_辅助线索", "WARN" if low else "PASS", "存在正文页文字量异常偏低；该项仅作辅助线索，仍需结合实际页面几何判断。" if low else "未发现明显低内容页。", low or None),
     ]
+
+
+def _safe_float(value) -> Optional[float]:
+    try:
+        x = float(value)
+        if x <= -9990000 or x != x:
+            return None
+        return x
+    except Exception:
+        return None
+
+
+def _range_vertical_y(doc, pos: int) -> Optional[float]:
+    try:
+        end_limit = max(1, int(doc.Content.End))
+        pos = max(0, min(int(pos), end_limit - 1))
+        r = doc.Range(pos, min(pos + 1, end_limit))
+        y = _safe_float(r.Information(WD_VERTICAL_POSITION_RELATIVE_TO_PAGE))
+        return y if y is not None and y >= 0 else None
+    except Exception:
+        return None
+
+
+def _page_body_box(page_range) -> Optional[Dict[str, float]]:
+    try:
+        ps = page_range.Sections(1).PageSetup
+        page_height = _safe_float(ps.PageHeight)
+        top_margin = _safe_float(ps.TopMargin)
+        bottom_margin = _safe_float(ps.BottomMargin)
+        if page_height is None or top_margin is None or bottom_margin is None:
+            return None
+        body_top = top_margin
+        body_bottom = page_height - bottom_margin
+        usable = body_bottom - body_top
+        if usable <= 0:
+            return None
+        return {
+            "body_top_pt": body_top,
+            "body_bottom_pt": body_bottom,
+            "usable_height_pt": usable,
+        }
+    except Exception:
+        return None
+
+
+def _visuals_on_page(doc, page_range, body_box: Optional[Dict[str, float]]) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    page_start, page_end = int(page_range.Start), int(page_range.End)
+
+    try:
+        count = int(page_range.InlineShapes.Count)
+    except Exception:
+        count = 0
+    for i in range(1, count + 1):
+        try:
+            shp = page_range.InlineShapes(i)
+            rng = shp.Range
+            top = _range_vertical_y(doc, int(rng.Start))
+            height = _safe_float(shp.Height)
+            width = _safe_float(shp.Width)
+            items.append({
+                "kind": "InlineShape",
+                "anchor_start": int(rng.Start),
+                "top_pt": round(top, 2) if top is not None else None,
+                "height_pt": round(height, 2) if height is not None else None,
+                "width_pt": round(width, 2) if width is not None else None,
+                "bottom_pt": round(top + height, 2) if top is not None and height is not None else None,
+            })
+        except Exception:
+            pass
+
+    try:
+        shape_count = int(doc.Shapes.Count)
+    except Exception:
+        shape_count = 0
+    for i in range(1, shape_count + 1):
+        try:
+            shp = doc.Shapes(i)
+            a = int(shp.Anchor.Start)
+            if not (page_start <= a < page_end):
+                continue
+            anchor_y = _range_vertical_y(doc, a)
+            raw_top = _safe_float(shp.Top)
+            height = _safe_float(shp.Height)
+            width = _safe_float(shp.Width)
+            try:
+                rel = int(shp.RelativeVerticalPosition)
+            except Exception:
+                rel = None
+            top = None
+            if raw_top is not None:
+                if rel == 1:
+                    top = raw_top
+                elif rel == 0 and body_box is not None:
+                    top = body_box["body_top_pt"] + raw_top
+                elif anchor_y is not None:
+                    top = anchor_y + raw_top
+            items.append({
+                "kind": "Shape",
+                "anchor_start": a,
+                "top_pt": round(top, 2) if top is not None else None,
+                "height_pt": round(height, 2) if height is not None else None,
+                "width_pt": round(width, 2) if width is not None else None,
+                "bottom_pt": round(top + height, 2) if top is not None and height is not None else None,
+                "relative_vertical_position": rel,
+            })
+        except Exception:
+            pass
+    return items
+
+
+def _page_content_bottom(doc, page_range, visuals: List[Dict[str, Any]]) -> Optional[float]:
+    bottoms: List[float] = []
+    page_start, page_end = int(page_range.Start), int(page_range.End)
+    try:
+        pcount = int(page_range.Paragraphs.Count)
+    except Exception:
+        pcount = 0
+    for i in range(1, pcount + 1):
+        try:
+            p = page_range.Paragraphs(i)
+            start = max(page_start, int(p.Range.Start))
+            end = min(page_end - 1, max(start, int(p.Range.End) - 1))
+            if end < start:
+                continue
+            seg = doc.Range(start, min(end + 1, int(doc.Content.End)))
+            if not re.sub(r"\s+", "", clean_text(seg.Text)):
+                continue
+            y = _range_vertical_y(doc, end)
+            if y is None:
+                continue
+            try:
+                line = _safe_float(p.Format.LineSpacing)
+            except Exception:
+                line = None
+            line = line if line is not None and 8 <= line <= 80 else 18.0
+            bottoms.append(y + min(max(line * 0.85, 10.0), 36.0))
+        except Exception:
+            pass
+    for item in visuals:
+        b = _safe_float(item.get("bottom_pt"))
+        if b is not None:
+            bottoms.append(b)
+    return max(bottoms) if bottoms else None
+
+
+def _body_page_number(document_page: int, body_start_page: int) -> Optional[int]:
+    return document_page - body_start_page + 1 if document_page >= body_start_page else None
+
+
+def check_image_migration_whitespace(doc, page_count: int, rules: Dict[str, Any]) -> Tuple[List[CheckResult], List[int]]:
+    body_start = int(rules.get("body_start_page", 2))
+    threshold = float(rules.get("bottom_whitespace_review_ratio", 1 / 3))
+    visual_top_limit = float(rules.get("next_page_visual_top_ratio", 0.30))
+    pre_char_limit = int(rules.get("next_page_pre_visual_char_limit", 140))
+    confirmed: List[Dict[str, Any]] = []
+    review: List[Dict[str, Any]] = []
+    incomplete: List[Dict[str, Any]] = []
+    evidence_pages = set()
+    saw_visual = False
+
+    for p in range(max(body_start, 1), page_count):
+        prev_r = get_page_range(doc, p, page_count)
+        next_r = get_page_range(doc, p + 1, page_count)
+        prev_box = _page_body_box(prev_r)
+        next_box = _page_body_box(next_r)
+        prev_visuals = _visuals_on_page(doc, prev_r, prev_box)
+        next_visuals = _visuals_on_page(doc, next_r, next_box)
+        if not next_visuals:
+            continue
+        saw_visual = True
+        if prev_box is None or next_box is None:
+            incomplete.append({"document_page": p, "reason": "无法读取页面正文区域几何"})
+            continue
+        content_bottom = _page_content_bottom(doc, prev_r, prev_visuals)
+        if content_bottom is None:
+            incomplete.append({"document_page": p, "reason": "无法取得该页最后实际内容纵向位置"})
+            continue
+        blank_height = max(0.0, prev_box["body_bottom_pt"] - content_bottom)
+        blank_ratio = blank_height / prev_box["usable_height_pt"]
+        if blank_ratio < threshold:
+            continue
+
+        geom = [x for x in next_visuals if _safe_float(x.get("top_pt")) is not None]
+        if not geom:
+            incomplete.append({"document_page": p + 1, "reason": "检测到下一页图片，但无法取得图片纵坐标"})
+            continue
+        first_visual = min(geom, key=lambda x: float(x["top_pt"]))
+        visual_top = float(first_visual["top_pt"])
+        top_ratio = max(0.0, (visual_top - next_box["body_top_pt"]) / next_box["usable_height_pt"])
+        anchor_start = int(first_visual.get("anchor_start") or int(next_r.Start))
+        try:
+            pre_text = clean_text(doc.Range(int(next_r.Start), min(max(anchor_start, int(next_r.Start)), int(next_r.End))).Text)
+            pre_chars = len(re.sub(r"\s+", "", pre_text))
+        except Exception:
+            pre_chars = None
+
+        detail = {
+            "previous_document_page": p,
+            "previous_body_page": _body_page_number(p, body_start),
+            "next_document_page": p + 1,
+            "next_body_page": _body_page_number(p + 1, body_start),
+            "bottom_blank_height_pt": round(blank_height, 2),
+            "bottom_blank_ratio": round(blank_ratio, 4),
+            "review_threshold_ratio": round(threshold, 4),
+            "next_visual_top_ratio_of_body": round(top_ratio, 4),
+            "pre_visual_char_count": pre_chars,
+            "visual": first_visual,
+        }
+        if top_ratio <= visual_top_limit and pre_chars is not None and pre_chars <= pre_char_limit:
+            detail["classification"] = "CONFIRMED_IMAGE_MIGRATION_RISK"
+            detail["reason"] = "上一页大块页底留白后，下一页靠近正文顶部即出现图片，且图片前文字很少。"
+            confirmed.append(detail)
+        else:
+            detail["classification"] = "REVIEW_REQUIRED"
+            detail["reason"] = "页底留白超过待审阈值，但自动证据不足以直接判定图片迁移，需要人工复核。"
+            review.append(detail)
+        evidence_pages.update((p, p + 1))
+
+    return [
+        CheckResult(
+            "彩图前页大块留白_图片迁移",
+            "FAIL" if confirmed else "PASS",
+            "发现高置信度图片迁移型大块页底留白；必须调整图片尺寸、插入位置或段落关系后重新 Word 渲染与复验。" if confirmed else "未发现高置信度图片迁移型大块页底留白。",
+            confirmed or None,
+        ),
+        CheckResult(
+            "大块页底留白_待复核",
+            "WARN" if review else "PASS",
+            "发现超过通用待审阈值的页底留白，但证据不足以自动确认；请结合相邻页 Word 版式复核。" if review else "未发现需要人工复核的图片相邻大块页底留白。",
+            review or None,
+        ),
+        CheckResult(
+            "彩图留白检测完整性",
+            "WARN" if incomplete else "PASS",
+            "部分图片页面无法取得足够实际几何信息，留白检测未完成；不得解释为已检查通过。" if incomplete else ("已使用 Microsoft Word 实际分页与页面位置数据完成彩图相邻留白检查。" if saw_visual else "正文未检测到可分析图片对象。"),
+            incomplete or None,
+        ),
+    ], sorted(evidence_pages)
+
+
+def export_whitespace_evidence(doc, pages: List[int], report_path: Path, evidence_dir: Optional[Path]) -> CheckResult:
+    if not pages:
+        return CheckResult("彩图留白证据", "PASS", "未触发彩图相邻留白异常，无需生成相邻页证据截图。")
+
+    target = evidence_dir or report_path.with_name(report_path.stem + "_evidence")
+    target.mkdir(parents=True, exist_ok=True)
+    pdf_path = target / "word_layout_evidence.pdf"
+    errors: List[str] = []
+    png_files: List[str] = []
+    try:
+        doc.ExportAsFixedFormat(str(pdf_path.resolve()), 17)
+    except Exception as e:
+        errors.append("Word PDF导出失败：" + str(e))
+
+    if pdf_path.exists():
+        try:
+            import fitz  # type: ignore
+            pdf = fitz.open(str(pdf_path))
+            try:
+                for p in pages:
+                    if 1 <= p <= len(pdf):
+                        pix = pdf[p - 1].get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+                        fn = target / f"word_page_{p:03d}.png"
+                        pix.save(str(fn))
+                        png_files.append(str(fn))
+            finally:
+                pdf.close()
+        except Exception as e:
+            errors.append("逐页PNG截图不可用：" + str(e))
+
+    manifest = {
+        "layout_engine": "Microsoft Word",
+        "document_pages": pages,
+        "word_pdf": str(pdf_path) if pdf_path.exists() else None,
+        "png_screenshots": png_files,
+        "errors": errors,
+        "note": "1/3为空白待审初始阈值，不是招标硬性要求。",
+    }
+    (target / "evidence_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if png_files:
+        return CheckResult("彩图留白证据", "PASS", "已生成异常页及相邻图片页的 Word 页面 PNG 证据，并保留 Word 导出 PDF。", manifest)
+    if pdf_path.exists():
+        return CheckResult("彩图留白证据", "WARN", "已生成 Microsoft Word 版式 PDF；当前环境未生成逐页 PNG，请按报告页码在 PDF 中复核。", manifest)
+    return CheckResult("彩图留白证据", "WARN", "异常页证据导出未完成；不得把证据项解释为已完成复核。", manifest)
 
 
 def doc_full_text(doc) -> str:
@@ -905,7 +1197,7 @@ def print_console(results: List[CheckResult], overall: str, report_path: Path) -
         print("FINAL_DELIVERY_BLOCKED")
 
 
-def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path) -> int:
+def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, evidence_dir: Optional[Path] = None) -> int:
     if sys.platform != "win32":
         raise AuditError("该脚本要求在 Windows 上运行，因为页数必须由本机 Microsoft Word 实际重新分页后判定。")
     if not docx_path.exists():
@@ -947,6 +1239,9 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path) -> int
         results.extend(check_pagination_controls(doc, records, headings, rules))
         results.append(check_page_orientation(doc, rules))
         results.extend(check_blank_and_low_content_pages(doc, page_count, rules))
+        whitespace_checks, whitespace_evidence_pages = check_image_migration_whitespace(doc, page_count, rules)
+        results.extend(whitespace_checks)
+        results.append(export_whitespace_evidence(doc, whitespace_evidence_pages, report_path, evidence_dir))
         results.extend(check_required_figures(doc, rules))
         results.extend(check_real_photo_slots(doc, rules))
         results.append(check_fonts(doc, records, rules))
@@ -955,7 +1250,8 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path) -> int
         overall = "PASS" if not hard_failures else "FAIL"
 
         report = {
-            "audit_version": "1.3.0",
+            "audit_version": "1.4.0",
+            "layout_engine": "Microsoft Word",
             "document": str(docx_path.resolve()),
             "document_sha256": sha256_file(docx_path),
             "audited_at": started,
@@ -968,6 +1264,8 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path) -> int
                 "WARN/SKIP 不等于硬失败；只有 FAIL 会阻止正式交付。项目敏感参数未知、或已提供字体规则但未实际检查到任何段落时，会主动产生 FAIL，避免假 PASS。",
                 "正式版全篇必须保持竖向页面；任何横道图、平面图等均不得通过横向页面展示。",
                 "脚本不能单凭 DOCX 可靠鉴别既有实景图片是否由 AI 生成。",
+                "彩图留白检测基于 Microsoft Word 实际分页后的页面几何；页底留白超过正文可用高度1/3仅为通用待审初始阈值，不是招标硬性要求。",
+                "高置信度上一页大留白+下一页靠近页首出现图片判为FAIL；证据不足时为WARN并要求复核。",
             ],
         }
         report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -993,6 +1291,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("document", type=Path, help="待审 Word 文件路径")
     p.add_argument("--rules", type=Path, default=None, help="项目规则 JSON（可选）")
     p.add_argument("--report", type=Path, default=None, help="审查报告 JSON 输出路径（可选）")
+    p.add_argument("--evidence-dir", type=Path, default=None, help="彩图留白异常页证据输出目录（可选）")
     return p.parse_args()
 
 
@@ -1000,7 +1299,7 @@ def main() -> int:
     args = parse_args()
     report = args.report or args.document.with_name(args.document.stem + "_audit_report.json")
     try:
-        return audit(args.document, args.rules, report)
+        return audit(args.document, args.rules, report, args.evidence_dir)
     except AuditError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 3
