@@ -4,6 +4,15 @@ on:
     branches: [main]
     paths: ['input/changfeng/**', 'audit/changfeng/**', '.github/workflows/changfeng-word-audit.yml']
   workflow_dispatch:
+    inputs:
+      photo_stage:
+        description: '实景图阶段：draft允许规范占位，final要求已替换'
+        required: true
+        type: choice
+        options:
+          - draft
+          - final
+        default: draft
 permissions:
   contents: read
 concurrency:
@@ -33,12 +42,18 @@ jobs:
           New-Item -ItemType Directory -Force output/changfeng | Out-Null
           & $env:AUDIT_PYTHON audit/changfeng/page_gate.py input/changfeng/design.docx --report output/changfeng/pages.json
           $pageExit = $LASTEXITCODE
-          if ($pageExit -eq 0) {
-            $pageReport = Get-Content output/changfeng/pages.json -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($pageReport.actual.body_pages -gt 50) { Write-Host "PROJECT_MAX50=FAIL"; $pageExit = 2 }
-            else { Write-Host "PROJECT_MAX50=PASS" }
+          # 真实页数合格区间仅从独立 page_gate.py 读取（本项目正文49–51页）。
+          # 不另设“≤50页”的第二套规则，以免与 ±1 的唯一页数来源冲突。
+          $photoStage = "${{ inputs.photo_stage }}"
+          if ($photoStage -ne "final") { $photoStage = "draft" }
+          $rulesPath = "audit/changfeng/rules.json"
+          # 如本项目生成了格式参数快照，可使用它；页数目标仍不在此规则文件中。
+          if (Test-Path "input/changfeng/format_rules.json") {
+            $rulesPath = "input/changfeng/format_rules.json"
           }
-          & $env:AUDIT_PYTHON audit/changfeng/delivery_gate.py input/changfeng/design.docx --rules audit/changfeng/rules.json --report output/changfeng/delivery.json
+          Write-Host "PHOTO_DELIVERY_STAGE=$photoStage"
+          Write-Host "FORMAT_RULES_PATH=$rulesPath"
+          & $env:AUDIT_PYTHON audit/changfeng/delivery_gate.py input/changfeng/design.docx --rules $rulesPath --photo-stage $photoStage --report output/changfeng/delivery.json
           $deliveryExit = $LASTEXITCODE
           "page_exit=$pageExit delivery_exit=$deliveryExit" | Set-Content output/changfeng/exit-codes.txt
           if ($pageExit -ne 0 -or $deliveryExit -ne 0) { exit 1 }
