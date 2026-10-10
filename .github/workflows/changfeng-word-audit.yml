@@ -2,11 +2,11 @@ name: Changfeng Word formal delivery audit
 on:
   push:
     branches: [main]
-    paths: ['input/changfeng/**', 'audit/changfeng/**', '.github/workflows/changfeng-word-audit.yml']
+    paths: ['input/changfeng/design.docx', 'input/changfeng/format_rules.json', 'audit/changfeng/**', '.github/workflows/changfeng-word-audit.yml']
   workflow_dispatch:
     inputs:
       photo_stage:
-        description: '实景图阶段：draft允许规范占位，final要求已替换'
+        description: 'Photo stage: draft placeholders or final verified photos'
         required: true
         type: choice
         options:
@@ -42,25 +42,14 @@ jobs:
           New-Item -ItemType Directory -Force output/changfeng | Out-Null
           & $env:AUDIT_PYTHON audit/changfeng/page_gate.py input/changfeng/design.docx --report output/changfeng/pages.json
           $pageExit = $LASTEXITCODE
-          # 真实页数合格区间仅从独立 page_gate.py 读取（本项目正文49–51页）。
-          # 不另设“≤50页”的第二套规则，以免与 ±1 的唯一页数来源冲突。
           $photoStage = "${{ inputs.photo_stage }}"
           if ($photoStage -ne "final") { $photoStage = "draft" }
           $rulesPath = "audit/changfeng/rules.json"
-          # 如本项目生成了格式参数快照，可使用它；页数目标仍不在此规则文件中。
           if (Test-Path "input/changfeng/format_rules.json") {
             $rulesPath = "input/changfeng/format_rules.json"
           }
-          # 任意自动生成的格式规则也不得绕过三图必备 hard=true。
-          $formatRule = Get-Content $rulesPath -Raw -Encoding UTF8 | ConvertFrom-Json
-          $mandatoryNames = @("施工功能分区示意图", "施工进度横道图", "施工进度网络图")
-          foreach ($name in $mandatoryNames) {
-            $matches = @($formatRule.required_figures | Where-Object { $_.name -eq $name -and $_.hard -eq $true })
-            if ($matches.Count -eq 0) {
-              Write-Error "MISSING_MANDATORY_FIGURE_RULE=$name"
-              exit 1
-            }
-          }
+          & $env:AUDIT_PYTHON audit/changfeng/check_mandatory_rules.py $rulesPath
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "PHOTO_DELIVERY_STAGE=$photoStage"
           Write-Host "FORMAT_RULES_PATH=$rulesPath"
           & $env:AUDIT_PYTHON audit/changfeng/delivery_gate.py input/changfeng/design.docx --rules $rulesPath --photo-stage $photoStage --report output/changfeng/delivery.json
