@@ -77,10 +77,12 @@ DEFAULT_RULES: Dict[str, Any] = {
     "required_level1_titles": None,
     "required_figures": None,
     "required_real_photo_slots": None,
+    "photo_delivery_stage": "draft",  # draft=允许规范占位；final=要求真实照片已替换
     "font_rules": None,
     "low_content_page_char_threshold": 30,
     # 通用版式待审阈值；不是招标页数参数。1/3仅用于触发图片迁移留白复核。
-    "bottom_whitespace_review_ratio": 1 / 3,
+    "bottom_whitespace_review_ratio": 1 / 3,  # 高置信度迁移 FAIL 阈值
+    "bottom_whitespace_optimization_ratio": 0.20,  # 提前 WARN 提示，非招标硬标准
     "next_page_visual_top_ratio": 0.30,
     "next_page_pre_visual_char_limit": 140,
 }
@@ -878,6 +880,9 @@ def _body_page_number(document_page: int, body_start_page: int) -> Optional[int]
 def check_image_migration_whitespace(doc, page_count: int, rules: Dict[str, Any]) -> Tuple[List[CheckResult], List[int]]:
     body_start = int(rules.get("body_start_page", 2))
     threshold = float(rules.get("bottom_whitespace_review_ratio", 1 / 3))
+    optimize = float(rules.get("bottom_whitespace_optimization_ratio", 0.20))
+    if not (0 < optimize <= threshold < 1):
+        raise AuditError("留白阈值无效：须满足0<优化提示≤迁移硬审<1")
     visual_top_limit = float(rules.get("next_page_visual_top_ratio", 0.30))
     pre_char_limit = int(rules.get("next_page_pre_visual_char_limit", 140))
     confirmed: List[Dict[str, Any]] = []
@@ -905,7 +910,7 @@ def check_image_migration_whitespace(doc, page_count: int, rules: Dict[str, Any]
             continue
         blank_height = max(0.0, prev_box["body_bottom_pt"] - content_bottom)
         blank_ratio = blank_height / prev_box["usable_height_pt"]
-        if blank_ratio < threshold:
+        if blank_ratio < optimize:
             continue
 
         geom = [x for x in next_visuals if _safe_float(x.get("top_pt")) is not None]
@@ -930,17 +935,18 @@ def check_image_migration_whitespace(doc, page_count: int, rules: Dict[str, Any]
             "bottom_blank_height_pt": round(blank_height, 2),
             "bottom_blank_ratio": round(blank_ratio, 4),
             "review_threshold_ratio": round(threshold, 4),
+            "optimization_threshold_ratio": round(optimize, 4),
             "next_visual_top_ratio_of_body": round(top_ratio, 4),
             "pre_visual_char_count": pre_chars,
             "visual": first_visual,
         }
-        if top_ratio <= visual_top_limit and pre_chars is not None and pre_chars <= pre_char_limit:
+        if blank_ratio >= threshold and top_ratio <= visual_top_limit and pre_chars is not None and pre_chars <= pre_char_limit:
             detail["classification"] = "CONFIRMED_IMAGE_MIGRATION_RISK"
             detail["reason"] = "上一页大块页底留白后，下一页靠近正文顶部即出现图片，且图片前文字很少。"
             confirmed.append(detail)
         else:
-            detail["classification"] = "REVIEW_REQUIRED"
-            detail["reason"] = "页底留白超过待审阈值，但自动证据不足以直接判定图片迁移，需要人工复核。"
+            detail["classification"] = "OPTIMIZATION_REVIEW" if blank_ratio < threshold else "REVIEW_REQUIRED"
+            detail["reason"] = "图前页底留白达到优化提示线，但自动证据不足以判定图片迁移，需要查看相邻页。"
             review.append(detail)
         evidence_pages.update((p, p + 1))
 
@@ -954,7 +960,7 @@ def check_image_migration_whitespace(doc, page_count: int, rules: Dict[str, Any]
         CheckResult(
             "大块页底留白_待复核",
             "WARN" if review else "PASS",
-            "发现超过通用待审阈值的页底留白，但证据不足以自动确认；请结合相邻页 Word 版式复核。" if review else "未发现需要人工复核的图片相邻大块页底留白。",
+            "图前页底留白默认20%起提示优化；请结合Word相邻页审查，20%不是招标硬标准。" if review else "未发现需要人工复核的图片相邻大块页底留白。",
             review or None,
         ),
         CheckResult(
@@ -1028,12 +1034,12 @@ def find_text_range(doc, keyword: str):
     return r if found else None
 
 
-def has_object_near_range(doc, rng, window: int = 600) -> bool:
+def has_object_near_range(doc, rng, window: int = 600, include_tables: bool = True) -> bool:
     start = max(0, int(rng.Start) - window)
     end = min(int(doc.Content.End), int(rng.End) + window)
     around = doc.Range(start, end)
     try:
-        if int(around.InlineShapes.Count) > 0 or int(around.Tables.Count) > 0:
+        if int(around.InlineShapes.Count) > 0 or (include_tables and int(around.Tables.Count) > 0):
             return True
     except Exception:
         pass
@@ -1079,34 +1085,111 @@ def check_required_figures(doc, rules: Dict[str, Any]) -> List[CheckResult]:
     return out
 
 
+def _placeholder_has_visible_frame(doc, placeholder: str) -> bool:
+    """占位必须真实存在于表格或文本框，而不只是正文中的说明文字。"""
+    try:
+        for i in range(1, int(doc.Tables.Count) + 1):
+            if placeholder in str(doc.Tables(i).Range.Text):
+                return True
+    except Exception:
+        pass
+    try:
+        for i in range(1, int(doc.Shapes.Count) + 1):
+            if placeholder in str(doc.Shapes(i).TextFrame.TextRange.Text):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def check_real_photo_slots(doc, rules: Dict[str, Any]) -> List[CheckResult]:
+    """草稿允许占位，正式稿禁止占位；实景照片必须有来源及可定位图形对象。"""
     raw = rules.get("required_real_photo_slots")
     if raw is None:
-        return [CheckResult("实景图占位", "FAIL", "尚未完成实景图素材/占位需求判断，无法完成硬审。")]
-    slots = raw or []
-    if not slots:
-        return [
-            CheckResult("实景图占位", "PASS", "已确认当前文档不存在‘缺真实素材但必须预留’的实景图项。"),
-            CheckResult("实景图_AI来源真实性", "WARN", "脚本不能仅凭 DOCX 可靠鉴别既有图片是否由 AI 生成；图片真实性仍需人工或素材来源记录确认。"),
-        ]
+        return [CheckResult("实景图需求规则", "FAIL", "尚未提取实景图需求，不能假报通过。")]
+    if not isinstance(raw, list):
+        return [CheckResult("实景图需求规则", "FAIL", "required_real_photo_slots 必须是数组。")]
+    stage = str(rules.get("photo_delivery_stage", "draft")).strip().lower()
+    if stage not in ("draft", "final"):
+        return [CheckResult("实景图交付阶段", "FAIL", "photo_delivery_stage 只能取 draft 或 final。")]
+
     full = doc_full_text(doc)
+    placeholders = RE_REAL_PHOTO_PLACEHOLDER.findall(full)
     out: List[CheckResult] = []
-    for item in slots:
-        name = str(item.get("name", "实景图"))
-        keywords = [str(x) for x in item.get("keywords", [])]
-        # 必须出现规范占位，且占位内至少命中名称或关键词之一
-        placeholders = RE_REAL_PHOTO_PLACEHOLDER.findall(full)
-        matched = None
-        for ph in placeholders:
-            if name in ph or any(k in ph for k in keywords):
-                matched = ph
-                break
+    if stage == "final":
+        out.append(CheckResult(
+            "正式稿_残留实景图占位",
+            "FAIL" if placeholders else "PASS",
+            "正式稿仍存在未替换的实景图占位，须插入真实照片或按非强制原则删除并更新图号。" if placeholders else "正式稿无实景图占位标记。",
+            placeholders or None,
+        ))
+    else:
+        out.append(CheckResult("草稿_允许实景图占位", "PASS", "当前为草稿阶段；规范占位仅可作为临时预留。"))
+
+    for item in raw:
+        if not isinstance(item, dict):
+            out.append(CheckResult("实景图规则项", "FAIL", "照片规则必须是对象。"))
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            out.append(CheckResult("实景图规则项", "FAIL", "照片规则缺少 name。"))
+            continue
+        keywords = [str(x) for x in item.get("keywords", []) if str(x).strip()]
+        matched = [ph for ph in placeholders if name in ph or any(k in ph for k in keywords)]
+        if stage == "draft":
+            if matched:
+                framed = any(_placeholder_has_visible_frame(doc, ph) for ph in matched)
+                out.append(CheckResult(
+                    f"实景图占位_{name}",
+                    "PASS" if framed else "FAIL",
+                    "已检测到规范照片占位框。" if framed else "存在占位文字但缺少实际占位框。",
+                    {"placeholder": matched[0], "framed": framed},
+                ))
+            elif bool(item.get("replaced")) and str(item.get("source_record") or "").strip():
+                out.append(CheckResult(f"实景图占位_{name}", "PASS", "照片已替换并记录来源。"))
+            else:
+                out.append(CheckResult(f"实景图占位_{name}", "FAIL", "缺少约定的占位框或已替换照片记录。"))
+            continue
+
         if matched:
-            out.append(CheckResult(f"实景图占位_{name}", "PASS", "已检测到规范实景图占位。", matched))
-        else:
-            out.append(CheckResult(f"实景图占位_{name}", "FAIL", "规则声明该处暂无真实素材，但未检测到规范占位。", {"expected_example": f"【实景图占位：拟插入{name}，建议尺寸××】"}))
-    out.append(CheckResult("实景图_AI来源真实性", "WARN", "脚本不能仅凭 DOCX 可靠鉴别既有图片是否由 AI 生成；图片真实性仍需人工或素材来源记录确认。"))
+            continue
+        caption = find_text_range(doc, name)
+        photo_near = bool(caption and has_object_near_range(doc, caption, window=450, include_tables=False))
+        has_source = bool(str(item.get("source_record") or "").strip())
+        replaced = bool(item.get("replaced"))
+        out.append(CheckResult(
+            f"正式实景图_{name}",
+            "PASS" if photo_near and has_source and replaced else "FAIL",
+            "存在照片对象且已登记照片来源；图片真实性仍需回查原始素材。" if photo_near and has_source and replaced else "缺少图题附近图像、明确的替换标记或实景照片来源记录。",
+            {"nearby_image": photo_near, "source_record_present": has_source, "replaced": replaced},
+        ))
+    out.append(CheckResult("实景图_AI真实性", "WARN", "脚本无法直接证明照片为当前项目真实拍摄，仍需人工核验来源。"))
     return out
+
+
+def check_figure_caption_numbering(records: List[Dict[str, Any]], body_start: int) -> CheckResult:
+    """核实Word显示图题在全篇连续，不接受图X、跳号、重号。"""
+    captions = []
+    faults = []
+    for rec in records:
+        if int(rec.get("page") or 0) < body_start:
+            continue
+        txt = str(rec.get("text") or "").strip()
+        if re.match(r"^图\s*[XxＸ]\b", txt):
+            faults.append({"document_page": rec.get("page"), "text": txt[:80], "reason": "出现图X占位编号"})
+            continue
+        m = re.match(r"^图\s*(\d+)\s*[ 　:：．.、-]+\s*(.+)$", txt)
+        if m:
+            captions.append({"number": int(m.group(1)), "text": txt[:100], "document_page": rec.get("page")})
+    for i, cap in enumerate(captions, 1):
+        if cap["number"] != i:
+            faults.append({"document_page": cap["document_page"], "expected": i, "actual": cap["number"], "text": cap["text"]})
+    if not captions:
+        return CheckResult("全篇图号连续性", "WARN", "没有识别到图1 图名形式的图题；需核实实际Word图号或域。")
+    return CheckResult("全篇图号连续性", "FAIL" if faults else "PASS",
+                       "发现跳号、重号或图X。" if faults else f"共识别{len(captions)}条图题，编号连续。",
+                       faults or {"count": len(captions)})
+
 
 
 def font_value_equal(actual: Any, expected: Any, numeric: bool = False) -> bool:
@@ -1197,7 +1280,7 @@ def print_console(results: List[CheckResult], overall: str, report_path: Path) -
         print("FINAL_DELIVERY_BLOCKED")
 
 
-def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, evidence_dir: Optional[Path] = None) -> int:
+def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, evidence_dir: Optional[Path] = None, photo_stage: Optional[str] = None) -> int:
     if sys.platform != "win32":
         raise AuditError("该脚本要求在 Windows 上运行，因为页数必须由本机 Microsoft Word 实际重新分页后判定。")
     if not docx_path.exists():
@@ -1211,6 +1294,8 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         raise AuditError("缺少 pywin32。请先运行：pip install pywin32") from e
 
     rules = load_rules(rules_path)
+    if photo_stage is not None:
+        rules["photo_delivery_stage"] = photo_stage
     word = None
     doc = None
     results: List[CheckResult] = []
@@ -1244,13 +1329,14 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         results.append(export_whitespace_evidence(doc, whitespace_evidence_pages, report_path, evidence_dir))
         results.extend(check_required_figures(doc, rules))
         results.extend(check_real_photo_slots(doc, rules))
+        results.append(check_figure_caption_numbering(records, int(rules["body_start_page"])))
         results.append(check_fonts(doc, records, rules))
 
         hard_failures = [r for r in results if r.status == "FAIL"]
         overall = "PASS" if not hard_failures else "FAIL"
 
         report = {
-            "audit_version": "1.4.0",
+            "audit_version": "1.5.0",
             "layout_engine": "Microsoft Word",
             "document": str(docx_path.resolve()),
             "document_sha256": sha256_file(docx_path),
@@ -1264,7 +1350,8 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
                 "WARN/SKIP 不等于硬失败；只有 FAIL 会阻止正式交付。项目敏感参数未知、或已提供字体规则但未实际检查到任何段落时，会主动产生 FAIL，避免假 PASS。",
                 "正式版全篇必须保持竖向页面；任何横道图、平面图等均不得通过横向页面展示。",
                 "脚本不能单凭 DOCX 可靠鉴别既有实景图片是否由 AI 生成。",
-                "彩图留白检测基于 Microsoft Word 实际分页后的页面几何；页底留白超过正文可用高度1/3仅为通用待审初始阈值，不是招标硬性要求。",
+                "约20%图前留白即WARN提示优化；约1/3并符合迁移证据时FAIL。这些不是招标硬要求。",
+                "实景图替换后可仅运行本脚本与独立项目页数脚本，无需重启40%/75%预编制流程。",
                 "高置信度上一页大留白+下一页靠近页首出现图片判为FAIL；证据不足时为WARN并要求复核。",
             ],
         }
@@ -1292,6 +1379,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--rules", type=Path, default=None, help="项目规则 JSON（可选）")
     p.add_argument("--report", type=Path, default=None, help="审查报告 JSON 输出路径（可选）")
     p.add_argument("--evidence-dir", type=Path, default=None, help="彩图留白异常页证据输出目录（可选）")
+    p.add_argument("--photo-stage", choices=["draft", "final"], default=None, help="草稿允许实景图占位；正式稿必须替换并记录来源")
     return p.parse_args()
 
 
@@ -1299,7 +1387,7 @@ def main() -> int:
     args = parse_args()
     report = args.report or args.document.with_name(args.document.stem + "_audit_report.json")
     try:
-        return audit(args.document, args.rules, report, args.evidence_dir)
+        return audit(args.document, args.rules, report, args.evidence_dir, args.photo_stage)
     except AuditError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 3
