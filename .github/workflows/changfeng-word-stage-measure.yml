@@ -42,6 +42,7 @@ jobs:
           GH_STAGE_TOKEN: ${{ github.token }}
         run: |
           $stage = ''
+          $remeasure = @()
           if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
             $stage = '${{ inputs.stage_percent }}'
           } else {
@@ -52,6 +53,7 @@ jobs:
             if ($changed -contains 'input/changfeng/stage_request.json') {
               $request = Get-Content input/changfeng/stage_request.json -Raw -Encoding UTF8 | ConvertFrom-Json
               $stage = [string]$request.stage_percent
+              if ($request.remeasure_stages) { $remeasure = @($request.remeasure_stages | ForEach-Object { [string]$_ }) }
             } else {
               $has40 = $changed -contains 'input/changfeng/stage-40.docx'
               $has75 = $changed -contains 'input/changfeng/stage-75.docx'
@@ -65,16 +67,22 @@ jobs:
           if (-not (Test-Path $doc)) { throw "Missing stage snapshot: $doc" }
           "STAGE_PERCENT=$stage" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           "STAGE_DOC=$doc" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          if ($remeasure.Count -eq 0) { $remeasure = @($stage) }
+          foreach ($n in $remeasure) { if ($n -notin @('40','75')) { throw 'Invalid remeasurement stage.' } }
+          ("STAGE_PERCENTS=" + ($remeasure -join ',')) | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "STAGE_PERCENT=$stage"
           Write-Host "STAGE_DOC=$doc"
       - name: Measure with Microsoft Word
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force output/changfeng | Out-Null
-          $json = "output/changfeng/stage-$env:STAGE_PERCENT-word-pages.json"
-          $txt = "output/changfeng/stage-$env:STAGE_PERCENT-word-pages.txt"
-          & $env:AUDIT_PYTHON audit/changfeng/stage_measure.py $env:STAGE_DOC --stage-percent $env:STAGE_PERCENT --report $json --text-report $txt
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($n in ($env:STAGE_PERCENTS -split ',')) {
+            $doc = "input/changfeng/stage-$n.docx"
+            $json = "output/changfeng/stage-$n-word-pages.json"
+            $txt = "output/changfeng/stage-$n-word-pages.txt"
+            & $env:AUDIT_PYTHON audit/changfeng/stage_measure.py $doc --stage-percent $n --report $json --text-report $txt
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
