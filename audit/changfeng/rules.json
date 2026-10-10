@@ -15,8 +15,7 @@
       "name": "施工功能分区示意图",
       "keywords": [
         "施工功能分区示意图",
-        "功能分区示意图",
-        "图1"
+        "功能分区示意图"
       ],
       "hard": true
     },
@@ -24,8 +23,7 @@
       "name": "施工进度横道图",
       "keywords": [
         "施工进度横道图",
-        "进度横道图",
-        "图2"
+        "进度横道图"
       ],
       "hard": true
     },
@@ -33,9 +31,7 @@
       "name": "施工进度网络图",
       "keywords": [
         "施工进度网络图",
-        "进度网络图",
-        "网络图",
-        "图3"
+        "进度网络图"
       ],
       "hard": true
     }
@@ -58,5 +54,8 @@
       "name_east_asia": "宋体",
       "size_pt": 16
     }
-  }
+  },
+  "photo_delivery_stage": "draft",
+  "bottom_whitespace_optimization_ratio": 0.2,
+  "bottom_whitespace_review_ratio": 0.3333333333333333
 }
