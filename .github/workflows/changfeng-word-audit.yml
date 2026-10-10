@@ -51,6 +51,16 @@ jobs:
           if (Test-Path "input/changfeng/format_rules.json") {
             $rulesPath = "input/changfeng/format_rules.json"
           }
+          # 任意自动生成的格式规则也不得绕过三图必备 hard=true。
+          $formatRule = Get-Content $rulesPath -Raw -Encoding UTF8 | ConvertFrom-Json
+          $mandatoryNames = @("施工功能分区示意图", "施工进度横道图", "施工进度网络图")
+          foreach ($name in $mandatoryNames) {
+            $matches = @($formatRule.required_figures | Where-Object { $_.name -eq $name -and $_.hard -eq $true })
+            if ($matches.Count -eq 0) {
+              Write-Error "MISSING_MANDATORY_FIGURE_RULE=$name"
+              exit 1
+            }
+          }
           Write-Host "PHOTO_DELIVERY_STAGE=$photoStage"
           Write-Host "FORMAT_RULES_PATH=$rulesPath"
           & $env:AUDIT_PYTHON audit/changfeng/delivery_gate.py input/changfeng/design.docx --rules $rulesPath --photo-stage $photoStage --report output/changfeng/delivery.json
