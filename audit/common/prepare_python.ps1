@@ -2,11 +2,11 @@ $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $cacheRoot = $env:RUNNER_TOOL_CACHE
 if (-not $cacheRoot) { $cacheRoot = Join-Path $env:USERPROFILE '.cache\construction-docx-qa' }
-$dest = Join-Path $cacheRoot 'changfeng-audit-python312'
+$dest = Join-Path $cacheRoot 'construction-audit-python312'
 New-Item -ItemType Directory -Force $dest | Out-Null
 $python = Join-Path $dest 'python.exe'
 if (-not (Test-Path $python)) {
-  Write-Host 'Preparing isolated Python 3.12.10 for original hard audit scripts'
+  Write-Host 'Preparing isolated Python 3.12.10 for generic hard audit scripts'
   $zip = Join-Path $dest 'python.zip'
   Invoke-WebRequest -UseBasicParsing -Uri 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip' -OutFile $zip
   Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force

@@ -5,14 +5,23 @@ from docx import Document
 from docx.shared import Inches,Pt
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-ROOT=Path(__file__).resolve().parents[1]
-import tempfile
-_testdir=tempfile.TemporaryDirectory()
-OUT=Path(_testdir.name)
+COMMON=Path(__file__).resolve().parents[1]
+import tempfile,shutil
+_temporary=tempfile.TemporaryDirectory()
+ROOT=Path(_temporary.name)/'skill';(ROOT/'scripts').mkdir(parents=True)
+for name in ('Word正式交付硬审（不含页数）.py','编制流程门禁.py','评分响应核验.py'):
+    shutil.copy2(COMMON/name,ROOT/'scripts'/name)
+active_pages=list((COMMON.parents[1]/'input/project').glob('*页数硬审*.py'))
+assert len(active_pages)==1,'One active project page script is required'
+shutil.copy2(active_pages[0],ROOT/'scripts'/active_pages[0].name)
+OUT=Path(_temporary.name)/'tests';OUT.mkdir()
 def load(name,file):
- spec=importlib.util.spec_from_file_location(name,ROOT/file);m=importlib.util.module_from_spec(spec);sys.modules[name]=m;spec.loader.exec_module(m);return m
+ spec=importlib.util.spec_from_file_location(name,ROOT/'scripts'/file);m=importlib.util.module_from_spec(spec);sys.modules[name]=m;spec.loader.exec_module(m);return m
 c=load('common','Word正式交付硬审（不含页数）.py');f=load('flow','编制流程门禁.py')
 names=c.FIGURE_NAMES
+TARGET=f.discover_page_script()[1]['EXPECTED_BODY_PAGES']
+TOLERANCE=f.discover_page_script()[1]['PAGE_TOLERANCE']
+FRONT=f.discover_page_script()[1]['FRONT_MATTER_PAGES']
 rules={'required_figures':[{'name':n,'keywords':[n],'hard':True,'color_required':True} for n in names],'required_real_photo_slots':[{'name':'现场沟塘'}],'photo_delivery_stage':'draft','font_rules':{},'required_level1_titles':[]}
 def make_doc(path, gray=False,photo=True,editorial=False,same=False,border=True,frame_text=True):
  d=Document();d.add_paragraph('第一章 施工部署');d.add_paragraph('路面强度按4.5MPa进行材料报审。')
@@ -46,10 +55,10 @@ expect('正式稿残留照片占位被拦截',bool(statuses(passdoc,rules|{'phot
 expect('空照片规则被拦截',bool(statuses(passdoc,rules|{'required_real_photo_slots':[]})))
 # CLI exit code and serialized report, not just internal function.
 rules_path=OUT/'format_rules.json';rules_path.write_text(json.dumps(rules,ensure_ascii=False))
-rc=subprocess.run([sys.executable,str(ROOT/'Word正式交付硬审（不含页数）.py'),str(passdoc),'--rules',str(rules_path),'--static-only','--report',str(OUT/'static.json')],capture_output=True,text=True)
+rc=subprocess.run([sys.executable,str(ROOT/'scripts/Word正式交付硬审（不含页数）.py'),str(passdoc),'--rules',str(rules_path),'--static-only','--report',str(OUT/'static.json')],capture_output=True,text=True)
 expect('静态CLI及文件哈希报告通过',rc.returncode==0 and json.loads((OUT/'static.json').read_text())['document_sha256']==f.sha256(passdoc))
 statepath=OUT/'state.json';statepath.unlink(missing_ok=True);f.cmd_init(statepath,False);state=f.load_state(statepath)
-state['plan']={'planned_total_body_pages':50,'chapter_plan':[{'chapter':'施工方法','basis':'技术复杂度','page_range':[25,30]},{'chapter':'保障措施','basis':'评分权重','page_range':[18,23]}],'figure_table_pages_estimate':5,'reserve_pages':1,'planning_notes':'按评分权重和技术复杂度计算总体容量及机动量','checkpoint_expected_page_ranges':{'40':[18,24],'75':[34,40]}}
+state['plan']={'planned_total_body_pages':TARGET,'chapter_plan':[{'chapter':'施工方法','basis':'技术复杂度','page_range':[TARGET*.45,TARGET*.6]},{'chapter':'保障措施','basis':'评分权重','page_range':[TARGET*.38,TARGET*.55]}],'figure_table_pages_estimate':5,'reserve_pages':1,'planning_notes':'按评分权重和技术复杂度计算总体容量及机动量','checkpoint_expected_page_ranges':{'40':[TARGET*.35,TARGET*.48],'75':[TARGET*.68,TARGET*.82]}}
 f.save_state(statepath,state)
 expect('未答最新文件且启动证据缺失被拦截',f.cmd_preflight(statepath)==2)
 source=OUT/'source.txt';source.write_text('Synthetic test source: general 4.5 MPa, detail 4.0 MPa. Not project evidence.')
@@ -59,8 +68,8 @@ state=f.load_state(statepath);bad=copy.deepcopy(state);bad['startup']['batch_pla
 f.save_state(statepath,state)
 expect('无阶段记录禁止最终硬审',f.cmd_final_ready(statepath)==2)
 # Word report fixtures are synthetic schema tests, not actual Word measurements.
-for stage,actual in [(40,20),(75,37)]:
- rpt={'page_source':'microsoft_word','status':'MEASURED','stage_percent':stage,'document_sha256':f.sha256(passdoc),'actual':{'word_body_pages':actual,'word_version':'synthetic'},'project_rule':{'target_body_pages':50,'page_tolerance':1,'front_matter_pages_excluded':1}}
+for stage,actual in [(40,round(TARGET*.4)),(75,round(TARGET*.75))]:
+ rpt={'page_source':'microsoft_word','status':'MEASURED','stage_percent':stage,'document_sha256':f.sha256(passdoc),'actual':{'word_body_pages':actual,'word_version':'synthetic'},'project_rule':{'target_body_pages':TARGET,'page_tolerance':TOLERANCE,'front_matter_pages_excluded':FRONT}}
  rp=OUT/f'synthetic-{stage}.json';rp.write_text(json.dumps(rpt))
  if stage==40:
   badrp=OUT/'wronghash.json';badrp.write_text(json.dumps(rpt|{'document_sha256':'wrong'}))
@@ -83,7 +92,7 @@ staticpath=OUT/'delivery-static.json';c.static_audit(passdoc,rules_path,staticpa
 word={'delivery_status':'PASS','document_sha256':f.sha256(passdoc),'layout_engine':'Microsoft Word','rules':rr,'rules_sha256':c.rules_digest(rr),'photo_delivery_stage':'draft','checks':[]}
 # Synthetic reports test schema only. They are never represented as Word execution.
 wp=OUT/'synthetic-word.json';wp.write_text(json.dumps(word))
-pg=OUT/'synthetic-pages.json';pg.write_text(json.dumps({'status':'PASS','page_source':'microsoft_word','document_sha256':f.sha256(passdoc),'rule':{'body_pages_target':50,'page_tolerance':1,'front_matter_pages_excluded':1}}))
+pg=OUT/'synthetic-pages.json';pg.write_text(json.dumps({'status':'PASS','page_source':'microsoft_word','document_sha256':f.sha256(passdoc),'rule':{'body_pages_target':TARGET,'page_tolerance':TOLERANCE,'front_matter_pages_excluded':FRONT}}))
 sc=OUT/'synthetic-score.json';sc.write_text(json.dumps({'status':'PASS','phase':'final','document_sha256':f.sha256(passdoc),'checks':[]}))
 wr=OUT/'warnings.json';wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':[]}))
 a=Namespace(document=passdoc,state=statepath,mode='full',review=rp,static_report=staticpath,word_report=wp,page_report=pg,score_report=sc,warning_review=wr)
@@ -100,18 +109,35 @@ expect('伪改静态报告仍不能让占位冒充正式照片',f.cmd_delivery(a
 
 source.write_text(source.read_text()+' version changed');expect('来源文件改变使旧内容核验失效',bool(f.validate_content_review(passdoc,rp)[0]))
 # No-page deployment must still block absent startup.
-np=OUT/'no-page';np.mkdir(exist_ok=True);(np/'编制流程门禁.py').write_text((ROOT/'编制流程门禁.py').read_text())
+np=OUT/'no-page';np.mkdir(exist_ok=True);(np/'编制流程门禁.py').write_text((ROOT/'scripts/编制流程门禁.py').read_text())
 rc=subprocess.run([sys.executable,str(np/'编制流程门禁.py'),'--state',str(np/'state.json'),'init'],capture_output=True);expect('无页数脚本仍初始化启动门禁',rc.returncode==2 and (np/'state.json').exists())
 rc=subprocess.run([sys.executable,str(np/'编制流程门禁.py'),'--state',str(np/'state.json'),'preflight'],capture_output=True);expect('无页数脚本不能绕过启动质询',rc.returncode==2)
 print(json.dumps({'passed':len(results),'tests':results,'limits':['Synthetic fixtures only; Windows Word not executed.']},ensure_ascii=False,indent=2))
 (OUT/'test-summary.json').write_text(json.dumps({'passed':len(results),'tests':results,'limits':['Synthetic fixtures only; Windows Word not executed.']},ensure_ascii=False,indent=2))
 
-# The compatibility aliases must also work with canonical modules.
-rc=subprocess.run([sys.executable,str(ROOT/'delivery_gate.py'),str(passdoc),'--rules',str(rules_path),'--photo-stage','draft','--static-only','--report',str(OUT/'alias-static.json')],capture_output=True,text=True)
-expect('Compatibility delivery alias executes portable checks',rc.returncode==0)
-for file in ('page_gate.py','stage_measure.py'):
- rc=subprocess.run([sys.executable,str(ROOT/file),'--help'],capture_output=True,text=True)
- expect(file+' command compatibility',rc.returncode==0)
-manifest=json.loads((ROOT/'skill_version.json').read_text())
-expect('Canonical scripts match synced skill SHA256',all(hashlib.sha256((ROOT/n).read_bytes()).hexdigest()==h for n,h in manifest['files_sha256'].items()))
-print(json.dumps({'total_passed':len(results),'limits':'No Microsoft Word execution in hosted tests'},ensure_ascii=False))
+# Replace only the page script; no generic code edits for a different target/front matter.
+common_hashes={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (ROOT/'scripts').glob('*.py') if '页数硬审' not in p.name}
+oldpage=next((ROOT/'scripts').glob('*页数硬审*.py'));oldpage.unlink()
+newpage=ROOT/'scripts'/'替换项目页数硬审.py'
+newpage.write_text("EXPECTED_BODY_PAGES = 80\nPAGE_TOLERANCE = 3\nFRONT_MATTER_PAGES = 3\n",encoding='utf-8')
+script,vals=f.discover_page_script()
+expect('Replacing only page script changes target and exclusion',vals=={'EXPECTED_BODY_PAGES':80,'PAGE_TOLERANCE':3,'FRONT_MATTER_PAGES':3})
+expect('Generic scripts stay byte-identical across project swap',all(hashlib.sha256((ROOT/'scripts'/n).read_bytes()).hexdigest()==h for n,h in common_hashes.items()))
+expect('Common Word audit derives body start from replacement script',c.load_rules(None)['body_start_page']==4)
+conflicting=OUT/'conflicting-format.json';conflicting.write_text(json.dumps({'body_start_page':2}))
+try:c.load_rules(conflicting);ok=False
+except c.AuditError:ok=True
+expect('Conflicting front matter rules blocked',ok)
+second=ROOT/'scripts'/'第二份项目页数硬审.py';shutil.copy2(newpage,second)
+try:f.discover_page_script();ok=False
+except RuntimeError:ok=True
+expect('Multiple project page scripts blocked',ok)
+second.unlink()
+# Stage measurement is generic; new page scripts need not implement a --stage switch.
+rc=subprocess.run([sys.executable,str(ROOT/'scripts/编制流程门禁.py'),'page-rule'],capture_output=True,text=True)
+expect('Automatic page-rule CLI sees renamed replacement',rc.returncode==0 and json.loads(rc.stdout)['body_pages_target']==80)
+rc=subprocess.run([sys.executable,str(ROOT/'scripts/编制流程门禁.py'),'run-page-audit','--document',str(passdoc),'--stage','40','--report',str(OUT/'unavailable-word.json')],capture_output=True,text=True)
+expect('Non-Windows cannot fake actual Word stage measurement',rc.returncode==3)
+manifest=json.loads((COMMON/'skill_version.json').read_text())
+expect('Generic scripts match exact synced skill bytes',all(hashlib.sha256((COMMON/n).read_bytes()).hexdigest()==h for n,h in manifest['common_files_sha256'].items()))
+print(json.dumps({'total_passed':len(results),'scope':'portable and interface tests; no Windows Word execution'},ensure_ascii=False))

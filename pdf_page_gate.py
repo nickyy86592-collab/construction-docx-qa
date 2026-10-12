@@ -94,14 +94,17 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("docx", type=Path)
     p.add_argument("--outdir", type=Path, default=Path("qa-output"))
-    p.add_argument("--body-target", type=int, required=True)
-    p.add_argument("--tolerance", type=int, default=1)
-    p.add_argument("--front-pages", type=int, default=1)
+    p.add_argument("--page-dir",type=Path,default=Path("input/project"),help="Read the unique current project page-audit script")
     a = p.parse_args()
-    if a.body_target < 1 or a.tolerance < 0 or a.front_pages < 0 or not a.docx.is_file():
-        p.error("Invalid target, tolerance, front pages, or missing DOCX")
     try:
-        return audit(a.docx.resolve(), a.outdir.resolve(), a.body_target, a.tolerance, a.front_pages)
+        import importlib.util
+        module_path=Path(__file__).resolve().parent/'audit/common/编制流程门禁.py'
+        spec=importlib.util.spec_from_file_location('_pdf_project_rules',module_path)
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        script,values=module.discover_page_script(a.page_dir)
+        if script is None:raise RuntimeError('Missing unique project page script')
+        if not a.docx.is_file():raise RuntimeError('Missing DOCX')
+        return audit(a.docx.resolve(),a.outdir.resolve(),values['EXPECTED_BODY_PAGES'],values['PAGE_TOLERANCE'],values['FRONT_MATTER_PAGES'])
     except Exception as exc:
         print(f"检测无法完成：{exc}", file=sys.stderr)
         return 3
@@ -109,3 +112,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+

@@ -1,0 +1,60 @@
+name: Word formal delivery audit
+on:
+  push:
+    branches: [main]
+    paths: ['input/project/**', 'audit/common/**', '.github/workflows/word-audit.yml']
+  workflow_dispatch:
+    inputs:
+      photo_stage:
+        description: 'auto follows project rules; draft placeholders or final verified photos'
+        required: true
+        type: choice
+        options: [auto, draft, final]
+        default: auto
+permissions:
+  contents: read
+concurrency:
+  group: word-formal-audit
+  cancel-in-progress: false
+jobs:
+  inputs:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.ready.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: ready
+        run: |
+          ready=$(python audit/common/runner_audit.py --mode formal --project-dir input/project --check-ready)
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+          echo "FORMAL_INPUT_READY=$ready"
+  audit:
+    needs: inputs
+    if: needs.inputs.outputs.ready == 'true'
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: audit-${{ github.run_id }}
+    env:
+      PYTHONUTF8: '1'
+      PHOTO_STAGE: ${{ inputs.photo_stage || 'auto' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: audit-${{ github.run_id }}
+      - name: Prepare cached Python and Word COM
+        id: runtime
+        shell: powershell
+        run: audit/common/prepare_python.ps1
+      - name: Run project-aware Word audit components
+        shell: powershell
+        run: |
+          & $env:AUDIT_PYTHON audit/common/runner_audit.py --mode formal --project-dir input/project --photo-stage $env:PHOTO_STAGE --outdir output/project
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: word-audit-${{ github.run_id }}
+          path: audit-${{ github.run_id }}/output/project/
+          if-no-files-found: warn

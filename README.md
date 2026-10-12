@@ -1,51 +1,25 @@
-# Construction DOCX QA
+# 通用施工组织设计 Word 审核
 
-本仓库用于施工组织设计 DOCX 的版式与页数校验。当前长丰义井镇项目同时保留三条通道：
+通用编制、格式和图文核验不绑定工程专业、名称、章节、字体或页数。项目事实与格式要求由AI从当次招标及技术资料提取；正文页数目标/范围、容差和封面目录扣除页数只来自当前唯一项目页数硬审脚本。
 
-1. **阶段 Microsoft Word 页数实测**：用于正文编制约 40% / 75% 时校准后续篇幅，不执行最终 50±1 页硬审。
-2. **最终 Microsoft Word 正式交付硬审**：运行项目页数硬审 + 通用正式交付硬审，并导出 Word 实际版式 PDF。
-3. **LibreOffice PDF 页数预检**：仅作云端预检，不代替 Microsoft Word 的最终结果。
+- 通用代码：`audit/common/`。
+- 当前项目输入：`input/project/`，仅保留一个`*页数硬审*.py`，名字可随项目变化。
+- 运行期正式稿：`input/project/design.docx`及AI生成的`format_rules.json`。
+- 阶段快照：`input/project/stage-40.docx`、`stage-75.docx`。
+- 历史项目资料：`archive/previous-projects/`，不参加当前项目审核。
 
-## 长丰义井镇：阶段 Word 实测
+## 换项目
 
-阶段页数的目标值、容差和封面/目录排除规则**唯一读取**：
+更换项目页数脚本（删除同目录旧页数文件，避免两份并存），正常提供新项目招标/图纸/知识库。AI重新生成项目状态、格式规则、照片清单和正文，将当前稿同步至统一输入路径。用户不需改通用技能、通用脚本或工作流。
 
-`audit/changfeng/page_gate.py`
+项目页数脚本保留三个字面量整数常量`EXPECTED_BODY_PAGES`、`PAGE_TOLERANCE`、`FRONT_MATTER_PAGES`；最终审核CLI支持`document --report 路径`及0/2/3退出码。没有强制固定的项目文件名。阶段实测直接读取同一脚本常量并调用Word，不要求项目脚本提供阶段模式。
 
-因此阶段实测不会另维护一份“50页”参数。
+## 执行入口
 
-阶段稿固定使用：
+`Word stage page measurement`实测40%/75%快照，仅产MEASURED，不把阶段稿按成稿范围判FAIL。`Word formal delivery audit`执行静态图文、项目页数、Word版式检查并导出Word PDF。两者复用`self-hosted, Windows, X64, word-audit`标签的运行器和缓存依赖。只有实际Word返回的分页报告才是Word证据。
 
-- 约 40%：`input/changfeng/stage-40.docx`
-- 约 75%：`input/changfeng/stage-75.docx`
-- 最终稿：`input/changfeng/design.docx`
+三张技术图必须彩色，真实照片或编制阶段带框占位必须存在。图件、照片主题、章节及字体来自运行期规则，通用仓库不保存项目默认章节/照片主题/字号。
 
-将阶段稿更新到对应路径后，会自动触发：
+当前项目尚无DOCX及格式规则时，工作流明确记录INPUT_READY=false并跳过Word任务，不声称通过Word审查。完整交付仍由Skill核对启动、阶段状态、评分、内容溯源和WARN；Word组件报告不替代完整delivery门禁。
 
-`Changfeng Word stage page measurement`
-
-Windows 自托管 runner 会调用本机 Microsoft Word 重新分页，产出阶段 JSON/TXT 报告。报告中的 `page_source` 必须为 `microsoft_word`。
-
-阶段报告仅用于校准后续章节容量；粗略线性投影不是硬性页数判定，不能机械凑页。
-
-## 长丰义井镇：最终正式交付硬审
-
-最终稿仍放在：
-
-`input/changfeng/design.docx`
-
-现有工作流 `Changfeng Word formal delivery audit` 保持不变，继续运行项目页数硬审和通用正式交付硬审。只有最终稿才执行正式页数 PASS/FAIL。
-
-## Windows 自托管 runner
-
-阶段实测和最终硬审共用现有 Windows runner 标签：
-
-`self-hosted, Windows, X64, word-audit`
-
-runner 窗口显示 `Listening for Jobs` 时才在线。
-
-本地原先用于配置 runner 的 ZIP 安装包，在已经成功解压、配置并能稳定接单后可以删除 ZIP 本身；**不要删除当前正在使用的已解压 runner 文件夹，也不要删除日常启动所用的 `start-word-runner.cmd`。**
-
-## LibreOffice PDF 预检
-
-仓库仍保留旧的 `DOCX PDF page preflight`。它只作辅助检查，不代替 Microsoft Word 阶段校准或最终硬审。
+`DOCX PDF page preflight`只作LibreOffice估值，同样读取唯一项目页数脚本，不在工作流填写另一份目标。`Generic audit synchronization checks`用临时合成文件检查通用脚本及换项目接口，不运行Windows Word。

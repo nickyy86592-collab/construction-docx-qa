@@ -24,6 +24,7 @@ from pathlib import Path
 
 STATE_DEFAULT = "篇幅规划状态.json"
 STAGES = (40, 75)
+PAGE_DIR = None
 
 
 def now_iso():
@@ -31,7 +32,7 @@ def now_iso():
 
 
 def _literal_constants(path: Path):
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
     vals = {}
     wanted = {"EXPECTED_BODY_PAGES", "PAGE_TOLERANCE", "FRONT_MATTER_PAGES"}
     for node in tree.body:
@@ -45,8 +46,10 @@ def _literal_constants(path: Path):
     return vals
 
 
-def discover_page_script():
-    here = Path(__file__).resolve().parent
+def discover_page_script(directory=None):
+    here = Path(directory or PAGE_DIR or Path(__file__).resolve().parent).resolve()
+    if not here.is_dir():
+        raise RuntimeError("页数脚本目录不存在："+str(here))
     found = []
     for p in sorted(here.glob("*页数硬审*.py")):
         if p.name == Path(__file__).name:
@@ -61,13 +64,15 @@ def discover_page_script():
     p, vals = found[0]
     vals.setdefault("PAGE_TOLERANCE", 0)
     vals.setdefault("FRONT_MATTER_PAGES", 0)
+    if any(type(vals[k]) is not int for k in ("EXPECTED_BODY_PAGES","PAGE_TOLERANCE","FRONT_MATTER_PAGES")) or vals["EXPECTED_BODY_PAGES"]<=0 or vals["PAGE_TOLERANCE"]<0 or vals["FRONT_MATTER_PAGES"]<0:
+        raise RuntimeError("项目页数规则必须为有效整数目标、非负容差及非负前置页数")
     return p, vals
 
 
 def load_state(path: Path):
     if not path.exists():
         raise RuntimeError(f"未找到状态文件：{path}，请先执行 init")
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def save_state(path: Path, data):
@@ -269,7 +274,7 @@ def _load_word_report(report_path: Path, expected_stage: int, page_script, vals)
     if not report_path.exists():
         raise RuntimeError(f"未找到 Microsoft Word 阶段报告：{report_path}")
 
-    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report = json.loads(report_path.read_text(encoding="utf-8-sig"))
     errors = []
 
     if report.get("page_source") != "microsoft_word":
@@ -459,7 +464,7 @@ def cmd_status(state_path: Path):
     if not state_path.exists():
         print("FLOW_GATE_STATUS=NOT_INITIALIZED")
         return 2
-    print(state_path.read_text(encoding="utf-8"))
+    print(state_path.read_text(encoding="utf-8-sig"))
     return 0
 
 
@@ -689,8 +694,60 @@ def cmd_delivery(a):
     return emit_gate([], 'FINAL_DELIVERY_ALLOWED' if stage=='final' else 'DRAFT_DELIVERY_ALLOWED')
 
 
+def cmd_page_rule():
+    script, vals = discover_page_script()
+    if script is None:
+        raise RuntimeError('未找到唯一项目页数硬审脚本')
+    rule = current_rule(script, vals)
+    rule['source_path'] = str(script.resolve())
+    rule['body_pages_allowed_range'] = [rule['body_pages_target']-rule['page_tolerance'],rule['body_pages_target']+rule['page_tolerance']]
+    print(json.dumps(rule,ensure_ascii=False))
+    return 0
+
+
+def cmd_run_page_audit(document, report_path, stage=None):
+    script, vals=discover_page_script()
+    if script is None:
+        raise RuntimeError('未找到唯一项目页数硬审脚本')
+    if stage is None:
+        import subprocess
+        return subprocess.run([sys.executable,str(script.resolve()),str(document.resolve()),'--report',str(report_path.resolve())]).returncode
+    if sys.platform!='win32':
+        raise RuntimeError('阶段实测要求Windows及可调用的Microsoft Word')
+    if not document.is_file():
+        raise RuntimeError('阶段DOCX快照不存在')
+    import win32com.client
+    word=doc=None
+    before=sha256(document)
+    try:
+        word=win32com.client.DispatchEx('Word.Application')
+        word.Visible=False
+        word.DisplayAlerts=0
+        doc=word.Documents.Open(str(document.resolve()),ReadOnly=True,AddToRecentFiles=False)
+        doc.Repaginate()
+        total=int(doc.ComputeStatistics(2))
+        front=int(vals['FRONT_MATTER_PAGES'])
+        if total<=front:
+            raise RuntimeError('阶段稿没有有效正文页')
+        if before!=sha256(document):
+            raise RuntimeError('测量期间阶段稿发生变化')
+        report={'audit_type':'word_stage_measurement','page_source':'microsoft_word','status':'MEASURED',
+                'document':str(document.resolve()),'document_sha256':before,'stage_percent':stage,
+                'measured_at':now_iso(),'project_rule_source':str(script.resolve()),
+                'project_rule':{'target_body_pages':vals['EXPECTED_BODY_PAGES'],'page_tolerance':vals['PAGE_TOLERANCE'],'front_matter_pages_excluded':front},
+                'actual':{'word_total_pages':total,'word_body_pages':total-front,'word_version':str(word.Version)}}
+        save_state(report_path,report)
+        print('WORD_STAGE_STATUS=MEASURED\nPAGE_SOURCE=microsoft_word\nREPORT='+str(report_path))
+        return 0
+    finally:
+        if doc is not None:doc.Close(False)
+        if word is not None:word.Quit()
+
+
 def main():
+    global PAGE_DIR
     p = argparse.ArgumentParser(description="施工组织设计预编制与 Microsoft Word 阶段篇幅流程门禁")
+    p.add_argument("--page-dir",type=Path,default=None,help="项目页数脚本目录；默认自动查找同目录唯一项目脚本")
     p.add_argument("--state", type=Path, default=Path(STATE_DEFAULT))
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -698,6 +755,11 @@ def main():
     s.add_argument("--force", action="store_true")
 
     sub.add_parser("preflight")
+    sub.add_parser("page-rule")
+    s=sub.add_parser("run-page-audit")
+    s.add_argument("--document",type=Path,required=True)
+    s.add_argument("--report",type=Path,required=True)
+    s.add_argument("--stage",type=int,choices=STAGES)
 
     s = sub.add_parser("checkpoint")
     s.add_argument("--stage", type=int, choices=STAGES, required=True)
@@ -722,7 +784,12 @@ def main():
     s.add_argument("--warning-review",type=Path)
 
     a = p.parse_args()
+    PAGE_DIR=a.page_dir
     try:
+        if a.command=="page-rule":
+            return cmd_page_rule()
+        if a.command=="run-page-audit":
+            return cmd_run_page_audit(a.document,a.report,a.stage)
         if a.command == "init":
             return cmd_init(a.state, a.force)
         if a.command == "preflight":

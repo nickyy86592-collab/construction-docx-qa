@@ -133,7 +133,7 @@ def normalize_toc_title(text: str) -> str:
     return t.strip()
 
 
-def load_rules(path: Optional[Path]) -> Dict[str, Any]:
+def load_rules(path: Optional[Path], page_dir=None) -> Dict[str, Any]:
     rules = json.loads(json.dumps(DEFAULT_RULES, ensure_ascii=False))
     if path:
         with path.open("r", encoding="utf-8") as f:
@@ -141,6 +141,31 @@ def load_rules(path: Optional[Path]) -> Dict[str, Any]:
         if not isinstance(incoming, dict):
             raise AuditError("规则文件顶层必须是 JSON 对象。")
         rules.update(incoming)
+    # Location only: page target remains exclusively in the project page script.
+    import ast
+    here=Path(page_dir or Path(__file__).resolve().parent)
+    if not here.is_dir():
+        raise AuditError('页数脚本目录不存在')
+    candidates=[]
+    for p in here.glob('*页数硬审*.py'):
+        values={}
+        for node in ast.parse(p.read_text(encoding='utf-8-sig')).body:
+            if isinstance(node,ast.Assign) and len(node.targets)==1 and isinstance(node.targets[0],ast.Name) and node.targets[0].id in ('EXPECTED_BODY_PAGES','PAGE_TOLERANCE','FRONT_MATTER_PAGES'):
+                values[node.targets[0].id]=ast.literal_eval(node.value)
+        if 'EXPECTED_BODY_PAGES' in values:
+            candidates.append(values)
+    if len(candidates)>1:
+        raise AuditError('页数来源不唯一')
+    if candidates:
+        front=candidates[0].get('FRONT_MATTER_PAGES',0)
+        if type(front) is not int or front<0:
+            raise AuditError('封面目录排除页数必须为非负整数')
+        if path and 'body_start_page' in incoming and incoming['body_start_page']!=front+1:
+            raise AuditError('格式规则正文起始页与当前页数脚本不一致，先解决冲突')
+        rules['body_start_page']=front+1
+        rules['front_page']=1
+    elif page_dir is not None:
+        raise AuditError('指定目录未找到项目页数脚本')
     return rules
 
 
@@ -328,8 +353,10 @@ def check_front_page_and_body(doc, records: List[Dict[str, Any]], headings: List
     else:
         out.append(CheckResult("首页内容_目录不得进入导航窗格", "PASS", "首页未发现 Heading 1–3 大纲标题。"))
 
-    front_range = get_page_range(doc, front, page_count)
-    front_text = clean_text(front_range.Text)
+    if body_start<=front:
+        out.append(CheckResult("前置封面目录", "SKIP", "当前项目页数脚本配置无前置扣除页；需按项目要求复核。"))
+        return out
+    front_text = "\n".join(clean_text(get_page_range(doc, n, page_count).Text) for n in range(front,body_start))
     front_lines = [normalize_spaces(x) for x in re.split(r"[\r\n]+", front_text) if normalize_spaces(x)]
 
     # 首页不得出现二级、三级标题格式内容。
@@ -373,7 +400,7 @@ def check_front_page_and_body(doc, records: List[Dict[str, Any]], headings: List
     else:
         out.append(CheckResult(
             "首页封面信息", "FAIL",
-            "首页未检测到有效封面信息，或一级目录从首页首项直接开始；第1页必须同时包含封面及一级目录。",
+            "首页未检测到有效封面信息，或一级目录从首页首项直接开始；前置扣除页范围内须包含封面及一级目录。",
         ))
 
     if page1_toc == body_l1 and body_l1:
@@ -1402,7 +1429,7 @@ def print_console(results: List[CheckResult], overall: str, report_path: Path) -
         print("FINAL_DELIVERY_BLOCKED")
 
 
-def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, evidence_dir: Optional[Path] = None) -> int:
+def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, evidence_dir: Optional[Path] = None, page_dir=None) -> int:
     if sys.platform != "win32":
         raise AuditError("该脚本要求在 Windows 上运行，因为页数必须由本机 Microsoft Word 实际重新分页后判定。")
     if not docx_path.exists():
@@ -1415,7 +1442,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
     except ImportError as e:
         raise AuditError("缺少 pywin32。请先运行：pip install pywin32") from e
 
-    rules = load_rules(rules_path)
+    rules = load_rules(rules_path,page_dir)
     word = None
     doc = None
     results: List[CheckResult] = []
@@ -1498,7 +1525,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
 
 # Portable checks inspect the embedded DOCX bytes, not an external image filename.
 FIGURE_NAMES = ('施工功能分区示意图', '施工进度横道图', '施工进度网络图')
-EDITORIAL_RE = re.compile(r'本[章节段](?:应|需|可)(?:写|补充|描述|引用)|(?:后续|此处|这里)(?:补写|扩写|插入正文)|得分点|知识库|Skill|SKILL|脚本|待完善正文|编制时应|本段可用')
+EDITORIAL_RE = re.compile(r'本[章节段](?:应|需|可)(?:写|补充|描述|引用)|(?:后续|此处|这里)(?:补写|扩写|插入正文)|得分点|(?:引用|调用|根据)知识库|Skill|SKILL|(?:编制|审核|硬审|页数|门禁)脚本|待完善正文|编制时应|本段可用')
 
 
 def rules_digest(rules):
@@ -1649,8 +1676,8 @@ def portable_checks(document, rules):
     return out
 
 
-def static_audit(document, rules_path, report_path):
-    rules = load_rules(rules_path)
+def static_audit(document, rules_path, report_path,page_dir=None):
+    rules = load_rules(rules_path,page_dir)
     results = portable_checks(document, rules)
     overall = 'FAIL' if any(x.status=='FAIL' for x in results) else 'PASS'
     report = {'audit_version':'1.6.0', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
@@ -1666,6 +1693,7 @@ def static_audit(document, rules_path, report_path):
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="通用 Word 正式交付硬审脚本（不含页数目标审核）")
     p.add_argument("document", type=Path, help="待审 Word 文件路径")
+    p.add_argument("--page-dir",type=Path,default=None,help="当前唯一项目页数脚本目录，自动派生正文页定位")
     p.add_argument("--static-only", action="store_true", help="跨平台静态检测嵌入彩图/照片框/图号/内部语言，不代表Word版式验收")
     p.add_argument("--rules", type=Path, default=None, help="项目规则 JSON（可选）")
     p.add_argument("--report", type=Path, default=None, help="审查报告 JSON 输出路径（可选）")
@@ -1678,8 +1706,8 @@ def main() -> int:
     report = args.report or args.document.with_name(args.document.stem + "_audit_report.json")
     try:
         if args.static_only:
-            return static_audit(args.document, args.rules, report)
-        return audit(args.document, args.rules, report, args.evidence_dir)
+            return static_audit(args.document, args.rules, report,args.page_dir)
+        return audit(args.document, args.rules, report, args.evidence_dir,args.page_dir)
     except AuditError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 3

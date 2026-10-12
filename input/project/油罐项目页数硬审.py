@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-本项目页数硬审脚本
+油罐项目页数硬审脚本
 项目要求：
-- 施工组织设计正文目标：50页，允许±1页
+- 正文内容（除封面及目录外）总页数不得超过400页，不低于390页
+- 合格范围：390–400页，包含两个边界；395±5仅为兼容流程门禁的等价表示
 - 不含封面和目录
-- 当前配套主硬审规则已规定：封面 + 一级目录仅占第1页，正文从第2页开始
-- 因此：正文合格范围为49–51页，对应Word总页数合格范围为50–52页
+- 沿用参照脚本：封面 + 目录合计按1页扣除，正文从第2页开始
+- 若本项目封面及目录实际合计不是1页，须修改下方FRONT_MATTER_PAGES后再审核
+- 当前配置下：正文合格范围为390–400页，对应Word总页数合格范围为391–401页
 
 运行环境：
     Windows
@@ -15,7 +17,7 @@
     pip install pywin32
 
 用法：
-    python "本项目页数硬审.py" "施工组织设计.docx"
+    python "油罐项目页数硬审.py" "施工组织设计.docx"
 
 退出码：
     0 = PASS
@@ -37,9 +39,9 @@ WD_STATISTIC_PAGES = 2
 # -----------------------------
 # 本项目固定页数规则
 # -----------------------------
-EXPECTED_BODY_PAGES = 50
-PAGE_TOLERANCE = 1
-FRONT_MATTER_PAGES = 1   # 第1页：封面 + 一级目录
+EXPECTED_BODY_PAGES = 395
+PAGE_TOLERANCE = 5
+FRONT_MATTER_PAGES = 1   # 沿用参照脚本；如封面及目录合计多页，修改为实际合计页数
 MIN_BODY_PAGES = EXPECTED_BODY_PAGES - PAGE_TOLERANCE
 MAX_BODY_PAGES = EXPECTED_BODY_PAGES + PAGE_TOLERANCE
 MIN_TOTAL_PAGES = MIN_BODY_PAGES + FRONT_MATTER_PAGES
@@ -109,8 +111,8 @@ def audit(document: Path, report_path: Path, stage: int | None = None) -> int:
                 "page_tolerance": PAGE_TOLERANCE,
                 "body_pages_allowed_range": [MIN_BODY_PAGES, MAX_BODY_PAGES],
                 "front_matter_pages_excluded": FRONT_MATTER_PAGES,
-                "front_matter_definition": "第1页为封面 + 一级目录",
-                "body_start_page": 2,
+                "front_matter_definition": f"封面及目录合计{FRONT_MATTER_PAGES}页",
+                "body_start_page": FRONT_MATTER_PAGES + 1,
                 "total_pages_allowed_range": [MIN_TOTAL_PAGES, MAX_TOTAL_PAGES]
             },
             "actual": {
@@ -135,11 +137,11 @@ def audit(document: Path, report_path: Path, stage: int | None = None) -> int:
             print(f"WORD_STAGE_STATUS=MEASURED\nSTAGE={stage}\nBODY_PAGES={body_pages}\nREPORT={report_path}")
             return 0
 
-        print("\n=== 本项目页数硬审结果 ===")
+        print("\n=== 油罐项目页数硬审结果 ===")
         print(f"Microsoft Word 实际总页数：{total_pages}")
         print(f"排除封面及目录页数：{FRONT_MATTER_PAGES}")
         print(f"实际正文页数：{body_pages}")
-        print(f"目标正文页数：{EXPECTED_BODY_PAGES}（允许±{PAGE_TOLERANCE}页）")
+        print("正文页数要求：不低于390页，不超过400页（不含封面和目录）")
         print(f"正文合格范围：{MIN_BODY_PAGES}–{MAX_BODY_PAGES}页")
         print(f"总页数合格范围：{MIN_TOTAL_PAGES}–{MAX_TOTAL_PAGES}页")
         print("--------------------------------")
@@ -167,9 +169,9 @@ def audit(document: Path, report_path: Path, stage: int | None = None) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="本项目页数硬审：正文目标50页，允许±1页（不含封面和目录）"
+        description="油罐项目页数硬审：正文390–400页（不含封面和目录，含边界）"
     )
-    parser.add_argument("--stage",type=int,choices=(40,75),help="只测阶段页数，不按最终49–51页判定")
+    parser.add_argument("--stage",type=int,choices=(40,75),help="只测阶段页数，不按最终390–400页判定")
     parser.add_argument("document", type=Path, help="待审 Word 文件路径")
     parser.add_argument(
         "--report",
