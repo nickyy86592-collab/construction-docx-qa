@@ -35,27 +35,37 @@ jobs:
         id: runtime
         shell: powershell
         run: audit/changfeng/prepare_python.ps1
-      - name: Run original project hard audits
+      - name: Run synchronized project hard audits
         id: audits
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force output/changfeng | Out-Null
           & $env:AUDIT_PYTHON audit/changfeng/page_gate.py input/changfeng/design.docx --report output/changfeng/pages.json
           $pageExit = $LASTEXITCODE
-          $photoStage = "${{ inputs.photo_stage }}"
-          if ($photoStage -ne "final") { $photoStage = "draft" }
           $rulesPath = "audit/changfeng/rules.json"
           if (Test-Path "input/changfeng/format_rules.json") {
             $rulesPath = "input/changfeng/format_rules.json"
           }
+          $rules = Get-Content $rulesPath -Raw -Encoding UTF8 | ConvertFrom-Json
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $rules | Add-Member -NotePropertyName photo_delivery_stage -NotePropertyValue '${{ inputs.photo_stage }}' -Force
+          }
+          $photoStage = [string]$rules.photo_delivery_stage
+          $rulesPath = "output/changfeng/effective-format-rules.json"
+          $rules | ConvertTo-Json -Depth 30 | Set-Content $rulesPath -Encoding UTF8
+          # Convert Windows PowerShell BOM to UTF-8 without BOM for shared Python scripts.
+          & $env:AUDIT_PYTHON -c "from pathlib import Path; p=Path('$rulesPath'); p.write_text(p.read_text(encoding='utf-8-sig'),encoding='utf-8')"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $env:AUDIT_PYTHON audit/changfeng/check_mandatory_rules.py $rulesPath
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host "PHOTO_DELIVERY_STAGE=$photoStage"
           Write-Host "FORMAT_RULES_PATH=$rulesPath"
-          & $env:AUDIT_PYTHON audit/changfeng/delivery_gate.py input/changfeng/design.docx --rules $rulesPath --photo-stage $photoStage --report output/changfeng/delivery.json
+          & $env:AUDIT_PYTHON audit/changfeng/delivery_gate.py input/changfeng/design.docx --rules $rulesPath --static-only --report output/changfeng/static.json
+          $staticExit = $LASTEXITCODE
+          & $env:AUDIT_PYTHON audit/changfeng/delivery_gate.py input/changfeng/design.docx --rules $rulesPath --report output/changfeng/delivery.json
           $deliveryExit = $LASTEXITCODE
-          "page_exit=$pageExit delivery_exit=$deliveryExit" | Set-Content output/changfeng/exit-codes.txt
-          if ($pageExit -ne 0 -or $deliveryExit -ne 0) { exit 1 }
+          "page_exit=$pageExit static_exit=$staticExit delivery_exit=$deliveryExit" | Set-Content output/changfeng/exit-codes.txt
+          if ($pageExit -ne 0 -or $staticExit -ne 0 -or $deliveryExit -ne 0) { exit 1 }
       - name: Export actual Microsoft Word layout
         if: (success() || failure()) && steps.runtime.outcome == 'success'
         shell: powershell
@@ -67,3 +77,4 @@ jobs:
           name: changfeng-word-audit-${{ github.run_id }}
           path: audit-${{ github.run_id }}/output/changfeng/
           if-no-files-found: error
+

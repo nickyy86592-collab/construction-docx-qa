@@ -1,0 +1,24 @@
+name: Audit script synchronization checks
+on:
+  push:
+    branches: [main]
+    paths: ['audit/changfeng/**', '.github/workflows/audit-sync-check.yml']
+  pull_request:
+    paths: ['audit/changfeng/**', '.github/workflows/audit-sync-check.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  portable-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install Pillow python-docx PyYAML
+      - name: Compile synchronized scripts
+        run: python -m compileall -q audit/changfeng
+      - name: Run portable and compatibility regressions
+        run: python audit/changfeng/tests/test_audit_sync.py

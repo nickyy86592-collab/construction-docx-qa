@@ -59,12 +59,12 @@ jobs:
               Save-Result 'design-word-pdf-parts.json'
             }
           }
-          foreach ($file in @('prepare_python.ps1','stage_measure.py','page_gate.py','delivery_gate.py','export_pdf.py')) {
+          foreach ($file in @('prepare_python.ps1','stage_measure.py','page_gate.py','delivery_gate.py','export_pdf.py','Word正式交付硬审（不含页数）.py','长丰义井镇项目页数硬审.py','编制流程门禁.py','评分响应核验.py','check_mandatory_rules.py')) {
             Fetch-File "audit/changfeng/$file" $file
           }
           Fetch-File 'input/web3/rules.json' 'rules.json'
           . ./prepare_python.ps1
-          $python = Join-Path $env:RUNNER_TEMP 'changfeng-audit-python312/python.exe'
+          $python = $env:AUDIT_PYTHON
           $commitInfo = Invoke-RestMethod -Headers $headers -Uri "$api/commits/$sha"
           $changed = @($commitInfo.files | ForEach-Object { $_.filename })
           $isSetup = $changed -contains '.github/workflows/changfeng-web3-direct-word.yml'
@@ -85,11 +85,16 @@ jobs:
             Fetch-File 'input/web3/design.docx' 'design.docx'
             & $python page_gate.py design.docx --report pages.json
             $pageExit=$LASTEXITCODE
+            & $python check_mandatory_rules.py rules.json
+            if ($LASTEXITCODE -ne 0) { $failed=$true }
+            & $python delivery_gate.py design.docx --rules rules.json --static-only --report static.json
+            $staticExit=$LASTEXITCODE
             & $python delivery_gate.py design.docx --rules rules.json --report delivery.json
             $deliveryExit=$LASTEXITCODE
             & $python export_pdf.py design.docx design-word.pdf
-            foreach ($f in @('pages.json','delivery.json','design-word.pdf')) { if (Test-Path $f) { Save-Result $f } }
+            foreach ($f in @('pages.json','static.json','delivery.json','design-word.pdf')) { if (Test-Path $f) { Save-Result $f } }
             $p=Get-Content pages.json -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($pageExit -ne 0 -or $deliveryExit -ne 0 -or $p.actual.body_pages -gt 50) { $failed=$true }
+            if ($pageExit -ne 0 -or $staticExit -ne 0 -or $deliveryExit -ne 0) { $failed=$true }
           }
           if ($failed) { throw 'One or more Word measurements or audits failed; inspect published reports.' }
+

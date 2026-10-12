@@ -18,7 +18,8 @@
         "功能分区示意图",
         "图1"
       ],
-      "hard": true
+      "hard": true,
+      "color_required": true
     },
     {
       "name": "施工进度横道图",
@@ -27,7 +28,8 @@
         "进度横道图",
         "图2"
       ],
-      "hard": true
+      "hard": true,
+      "color_required": true
     },
     {
       "name": "施工进度网络图",
@@ -37,10 +39,34 @@
         "网络图",
         "图3"
       ],
-      "hard": true
+      "hard": true,
+      "color_required": true
     }
   ],
-  "required_real_photo_slots": [],
+  "required_real_photo_slots": [
+    {
+      "name": "接户管线、居民通道及原有地面调查",
+      "required": true,
+      "source_status": "not_provided",
+      "placeholder_keywords": [
+        "接户管线、居民通道及原有地面调查"
+      ],
+      "keywords": [
+        "接户管线、居民通道及原有地面调查"
+      ]
+    },
+    {
+      "name": "河塘岸坡、作业通道及底泥临时收集条件",
+      "required": true,
+      "source_status": "not_provided",
+      "placeholder_keywords": [
+        "河塘岸坡、作业通道及底泥临时收集条件"
+      ],
+      "keywords": [
+        "河塘岸坡、作业通道及底泥临时收集条件"
+      ]
+    }
+  ],
   "font_rules": {
     "body": {
       "name_east_asia": "宋体",
@@ -58,5 +84,6 @@
       "name_east_asia": "宋体",
       "size_pt": 16
     }
-  }
+  },
+  "photo_delivery_stage": "draft"
 }
