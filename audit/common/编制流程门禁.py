@@ -111,7 +111,9 @@ def cmd_init(state_path: Path, force: bool):
     front = int(vals["FRONT_MATTER_PAGES"]) if vals else 0
 
     state = {
-        "schema_version": "2.0",
+        "schema_version": "3.0",
+        "module_registry": {},
+        "pilot": {},
         "startup": startup_template(),
         "created_at": now_iso(),
         "updated_at": now_iso(),
@@ -126,6 +128,12 @@ def cmd_init(state_path: Path, force: bool):
         },
         "plan": {
             "status": "NOT_READY",
+            "revision": 1,
+            "requirements": [],
+            "modules": [],
+            "pilot_plan": {},
+            "checkpoint_module_ids": {},
+            "checkpoint_completion_basis": {},
             "planned_total_body_pages": None,
             "chapter_plan": [],
             "figure_table_pages_estimate": None,
@@ -164,7 +172,9 @@ def cmd_preflight(state_path: Path):
     page_script, vals = discover_page_script()
     state = load_state(state_path)
     if page_script is None:
-        errors=startup_errors(state,state_path.parent)
+        errors=startup_errors(state,state_path.parent)+detailed_plan_errors(state,state_path.parent,0)
+        state["gate"]["plan_hash"]=plan_hash(state)
+        state["gate"]["draft_ready"]="FAIL" if errors else "PASS"
         state["gate"]["preflight"]="FAIL" if errors else "PASS"
         save_state(state_path,state)
         return emit_gate(errors,"PRE_DRAFT_ALLOWED")
@@ -176,16 +186,16 @@ def cmd_preflight(state_path: Path):
     if not is_num(planned):
         errors.append("未填写 planned_total_body_pages")
     else:
-        corridor = max(2, math.ceil(target * 0.08))
+        corridor = int(vals["PAGE_TOLERANCE"])
         if not target - corridor <= float(planned) <= target + corridor:
             errors.append(
-                f"规划总正文页数 {planned} 明显偏离目标 {target}，"
-                f"应先收敛至约 {target-corridor}–{target+corridor} 页"
+                f"规划总正文页数 {planned} 不在项目脚本准入范围，"
+                f"必须先收敛至 {target-corridor}–{target+corridor} 页"
             )
 
     chapters = plan.get("chapter_plan")
-    if not isinstance(chapters, list) or len(chapters) < 2:
-        errors.append("chapter_plan 至少应有两个实际章节/关键内容规划")
+    if not isinstance(chapters, list) or len(chapters) < 1:
+        errors.append("chapter_plan 至少应有一个实际章节/关键内容规划")
     else:
         for i, x in enumerate(chapters, 1):
             if not isinstance(x, dict):
@@ -245,6 +255,7 @@ def cmd_preflight(state_path: Path):
         if not lo <= ratio <= hi:
             errors.append(f"{stage}% 阶段预计页数与总目标关系明显不合理")
 
+    errors += detailed_plan_errors(state,state_path.parent,target)
     state["updated_at"] = now_iso()
     if errors:
         state["phase"] = "PLANNING"
@@ -257,7 +268,7 @@ def cmd_preflight(state_path: Path):
             print("- " + e)
         return 2
 
-    state["phase"] = "DRAFTING_ALLOWED"
+    state["phase"] = "PILOT_ONLY" if planning_policy(target)["pilot_required"] else "DRAFTING_ALLOWED"
     state["plan"]["status"] = "READY"
     state["gate"]["preflight"] = "PASS"
     state["gate"]["preflight_passed_at"] = now_iso()
@@ -265,7 +276,10 @@ def cmd_preflight(state_path: Path):
     save_state(state_path, state)
 
     print("FLOW_GATE_STATUS=PASS")
-    print("PRE_DRAFT_ALLOWED")
+    state["gate"]["plan_hash"] = plan_hash(state)
+    state["gate"]["draft_ready"] = "BLOCKED" if planning_policy(target)["pilot_required"] else "PASS"
+    save_state(state_path,state)
+    print("PILOT_DRAFT_ALLOWED" if planning_policy(target)["pilot_required"] else "PRE_DRAFT_ALLOWED")
     print(f"TARGET_BODY_PAGES={target}")
     return 0
 
@@ -325,7 +339,7 @@ def cmd_checkpoint(
         print("PRE_DRAFT_NOT_PASSED")
         return 2
 
-    errors = _rule_mismatch(state, page_script, vals)+startup_errors(state,state_path.parent)
+    errors = _rule_mismatch(state, page_script, vals)+startup_errors(state,state_path.parent)+production_errors(state,state_path.parent,vals["EXPECTED_BODY_PAGES"])+checkpoint_modules_errors(state,state_path.parent,stage,document)
     if stage==75 and (state.get("checkpoints",{}).get("40",{}).get("status") not in ("PASS","PROVISIONAL")):
         errors.append("75%前必须完成40%校准")
     if errors:
@@ -353,7 +367,8 @@ def cmd_checkpoint(
             raise RuntimeError("Word阶段报告与实际快照哈希不匹配")
         source = "microsoft_word"
         report_meta = {
-            "report_file": str(report_path),
+            "report_file": str(report_path.resolve()),
+            "report_sha256": sha256(report_path),
             "document_sha256": report.get("document_sha256"),
             "word_version": (report.get("actual") or {}).get("word_version"),
         }
@@ -371,7 +386,10 @@ def cmd_checkpoint(
 
     if not is_num(actual) or actual<=0:
         raise RuntimeError("阶段页数必须为正有限数值")
-    within = lo <= actual <= hi
+    selected=state["plan"]["checkpoint_module_ids"][str(stage)]
+    projected=forecast_remaining(state,selected,actual)
+    target=vals["EXPECTED_BODY_PAGES"]; tolerance=vals["PAGE_TOLERANCE"]
+    within = lo <= actual <= hi and target-tolerance <= projected <= target+tolerance
     if source == "microsoft_word":
         status = "PASS" if within else "FAIL"
         phase = f"CHECKPOINT_{stage}_{status}"
@@ -382,6 +400,9 @@ def cmd_checkpoint(
         rc = 0 if within else 2
 
     cp = {
+        "module_ids": selected,
+        "module_source_hashes": {mid:state["module_registry"][mid]["source_sha256"] for mid in selected},
+        "projected_final_body_pages": projected,
         "snapshot_path": str(document.resolve()),
         "document_sha256": sha256(document),
         "checked_at": now_iso(),
@@ -405,6 +426,7 @@ def cmd_checkpoint(
     print(f"ACTUAL_PAGES={actual}")
     print(f"EXPECTED_RANGE={lo:g}-{hi:g}")
     print(f"PAGE_SOURCE={source}")
+    print(f"PROJECTED_FINAL_BODY_PAGES={projected}")
 
     if status == "PASS":
         print("DRAFTING_ALLOWED")
@@ -416,13 +438,18 @@ def cmd_checkpoint(
     return rc
 
 
-def cmd_final_ready(state_path: Path):
+def cmd_final_ready(state_path: Path, document=None):
     state = load_state(state_path)
     errors = startup_errors(state,state_path.parent)
     page_script,vals=discover_page_script()
     if page_script:
         errors += _rule_mismatch(state,page_script,vals)
 
+    errors += production_errors(state,state_path.parent,vals["EXPECTED_BODY_PAGES"] if vals else 0)
+    if document is None:
+        errors.append("final-ready须提供实际合并后的DOCX")
+    else:
+        errors += registry_errors(state,state_path.parent,document=document)
     if (state.get("gate") or {}).get("preflight") != "PASS":
         errors.append("preflight 未通过")
 
@@ -434,6 +461,11 @@ def cmd_final_ready(state_path: Path):
             continue
         if not fresh_file({"path":cp.get("snapshot_path",""),"sha256":cp.get("document_sha256")},state_path.parent):
             errors.append(f"{stage}%快照缺失或已改变")
+        if any(state.get("module_registry",{}).get(mid,{}).get("source_sha256")!=h for mid,h in cp.get("module_source_hashes",{}).items()):
+            errors.append(f"{stage}%阶段模块源已改变，须重新测量")
+        wr=cp.get("word_report") or {}
+        if not fresh_file({"path":wr.get("report_file"),"sha256":wr.get("report_sha256")},state_path.parent):
+            errors.append(f"{stage}% Word测量报告丢失或已改变")
         if cp.get("status") != "PASS":
             errors.append(f"{stage}% 阶段 checkpoint 不是 PASS")
         if cp.get("page_source") != "microsoft_word":
@@ -623,7 +655,7 @@ def cmd_delivery(a):
         errors+=startup_errors(state,a.state.parent)
         if (state.get('gate') or {}).get('preflight')!='PASS':
             errors.append('启动preflight未通过')
-        if page_script and cmd_final_ready(a.state)!=0:
+        if cmd_final_ready(a.state,a.document)!=0:
             errors.append('阶段final-ready未通过')
     reports={}
     for name,path in [('static',a.static_report),('word',a.word_report),('score',a.score_report),('page',a.page_report)]:
@@ -705,11 +737,11 @@ def cmd_page_rule():
     return 0
 
 
-def cmd_run_page_audit(document, report_path, stage=None):
+def cmd_run_page_audit(document, report_path, stage=None, pilot=False):
     script, vals=discover_page_script()
     if script is None:
         raise RuntimeError('未找到唯一项目页数硬审脚本')
-    if stage is None:
+    if stage is None and not pilot:
         import subprocess
         return subprocess.run([sys.executable,str(script.resolve()),str(document.resolve()),'--report',str(report_path.resolve())]).returncode
     if sys.platform!='win32':
@@ -733,15 +765,361 @@ def cmd_run_page_audit(document, report_path, stage=None):
             raise RuntimeError('测量期间阶段稿发生变化')
         report={'audit_type':'word_stage_measurement','page_source':'microsoft_word','status':'MEASURED',
                 'document':str(document.resolve()),'document_sha256':before,'stage_percent':stage,
+                'measurement_role':'pilot' if pilot else 'checkpoint',
                 'measured_at':now_iso(),'project_rule_source':str(script.resolve()),
                 'project_rule':{'target_body_pages':vals['EXPECTED_BODY_PAGES'],'page_tolerance':vals['PAGE_TOLERANCE'],'front_matter_pages_excluded':front},
                 'actual':{'word_total_pages':total,'word_body_pages':total-front,'word_version':str(word.Version)}}
+        if pilot:
+            import re
+            start=doc.GoTo(What=1,Which=1,Count=front+1).Start
+            body=doc.Range(start,doc.Content.End)
+            count=lambda txt:len(re.sub(r'\s+','',str(txt).replace('\x07','')))
+            table_intervals=[]
+            for i in range(1,int(body.Tables.Count)+1):
+                r=body.Tables(i).Range
+                table_intervals.append((max(start,int(r.Start)),min(int(body.End),int(r.End))))
+            merged=[]
+            for lo,hi in sorted(table_intervals):
+                if merged and lo<=merged[-1][1]:merged[-1]=(merged[-1][0],max(merged[-1][1],hi))
+                else:merged.append((lo,hi))
+            tables=sum(count(doc.Range(lo,hi).Text) for lo,hi in merged if hi>lo)
+            total_chars=count(body.Text)
+            report['actual'].update(word_body_characters=total_chars,word_table_characters=tables,word_normal_text_characters=max(0,total_chars-tables))
+            evidence=report_path.with_suffix('.word.pdf')
+            evidence.parent.mkdir(parents=True,exist_ok=True)
+            doc.ExportAsFixedFormat(str(evidence.resolve()),17)
+            report['word_pdf_evidence']={'path':evidence.name,'sha256':sha256(evidence)}
         save_state(report_path,report)
         print('WORD_STAGE_STATUS=MEASURED\nPAGE_SOURCE=microsoft_word\nREPORT='+str(report_path))
         return 0
     finally:
         if doc is not None:doc.Close(False)
         if word is not None:word.Quit()
+
+
+# Detailed planning and module persistence are generic; the page script alone supplies targets.
+def planning_policy(target):
+    return {'pilot_required':target>=200,
+            'module_page_cap':max(12,min(30,math.ceil(target*.05))) if target else 20,
+            'pilot_page_range':[max(6,min(12,math.ceil(target*.02))),max(8,min(20,math.ceil(target*.04)))] if target else [6,12]}
+
+
+def plan_hash(state):
+    import hashlib
+    plan={k:v for k,v in (state.get('plan') or {}).items() if k!='status'}
+    return hashlib.sha256(json.dumps(plan,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+
+
+def _modules(state):
+    return (state.get('plan') or {}).get('modules') or []
+
+
+def _ids(state):
+    return [x.get('id') for x in _modules(state)]
+
+
+def _normal(s):
+    import re
+    return re.sub(r'\s+','',s)
+
+
+def _manuscript(path):
+    if path.suffix.lower() in ('.docx','.docm'):
+        import zipfile
+        import xml.etree.ElementTree as ET
+        ns={'w':'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+        with zipfile.ZipFile(path) as z:tree=ET.fromstring(z.read('word/document.xml'))
+        body=tree.find('w:body',ns)
+        full='\n'.join(''.join(t.text or '' for t in node.findall('.//w:t',ns)) for node in body)
+        normal='\n'.join(''.join(t.text or '' for t in node.findall('.//w:t',ns)) for node in body if node.tag.endswith('}p'))
+        return full,len(_normal(normal))
+    if path.suffix.lower() not in ('.md','.txt'):
+        raise RuntimeError('模块正文源只允许md/txt/docx，不用生成代码或状态JSON冒充正文')
+    text=path.read_text(encoding='utf-8-sig')
+    import re
+    lines=[re.sub(r'^\s*#{1,6}\s+','',line) for line in text.splitlines() if not line.lstrip().startswith(('|','!['))]
+    return text,len(_normal('\n'.join(lines)))
+
+
+def registry_errors(state,base,ids=None,document=None):
+    errors=[]; registry=state.get('module_registry') or {}
+    selected=ids if ids is not None else _ids(state)
+    word_text=_normal(_manuscript(document)[0]) if document else None
+    for mid in selected:
+        row=registry.get(mid)
+        if not row or row.get('status')!='complete':
+            errors.append('模块未完成并保存：'+str(mid));continue
+        if not fresh_file({'path':row.get('source_path'),'sha256':row.get('source_sha256')},base):
+            errors.append('模块正文源丢失或改变：'+mid)
+        if not fresh_file({'path':row.get('review_path'),'sha256':row.get('review_sha256')},base):
+            errors.append('模块核查记录丢失或改变：'+mid)
+        if word_text is not None:
+            quotes=row.get('probe_quotes') or []
+            if len(quotes)<2 or any(_normal(q) not in word_text for q in quotes):
+                errors.append('合并DOCX中缺少模块正文探针：'+mid)
+            if fresh_file({'path':row.get('source_path'),'sha256':row.get('source_sha256')},base):
+                import re
+                raw=_manuscript(Path(row['source_path']))[0]
+                content=re.sub(r'[^\w]','',raw)
+                actual=re.sub(r'[^\w]','',_manuscript(document)[0])
+                chunks=[content[i:i+100] for i in range(0,len(content),100)]
+                total=sum(map(len,chunks))
+                present=sum(len(x) for x in chunks if x in actual)
+                if total and present/total<.90:
+                    errors.append('合并DOCX中模块实质内容不足90%，不能只保留探针：'+mid)
+    return errors
+
+
+def _prefix_record(state,base):
+    # A measured failed checkpoint remains useful evidence for replanning, never a PASS.
+    all_ids=_ids(state); registry=state.get('module_registry') or {}
+    for stage in reversed(STAGES):
+        cp=(state.get('checkpoints') or {}).get(str(stage)) or {}
+        mids=cp.get('module_ids') or []
+        if cp.get('page_source')!='microsoft_word' or not mids or mids!=all_ids[:len(mids)]:continue
+        if not fresh_file({'path':cp.get('snapshot_path'),'sha256':cp.get('document_sha256')},base):continue
+        if any(registry.get(mid,{}).get('source_sha256')!=(cp.get('module_source_hashes') or {}).get(mid) for mid in mids):continue
+        wr=cp.get('word_report') or {}
+        if not fresh_file({'path':wr.get('report_file'),'sha256':wr.get('report_sha256')},base):continue
+        if registry_errors(state,base,mids):continue
+        return cp
+    return None
+
+
+def effective_budget(state,base):
+    modules=_modules(state); cp=_prefix_record(state,base)
+    measured_ids=set(cp.get('module_ids',[])) if cp else set()
+    total=float(cp['actual_pages']) if cp else 0.0
+    total+=sum(float(x['planned_pages']) for x in modules if x.get('id') not in measured_ids)
+    return total+float(state['plan']['reserve_pages'])
+
+
+def detailed_plan_errors(state,base,target):
+    errors=[];p=state.get('plan') or {};mods=p.get('modules');reqs=p.get('requirements')
+    if type(p.get('revision')) is not int or p['revision']<1:errors.append('规划须有正整数revision')
+    if not isinstance(reqs,list) or not reqs:
+        errors.append('缺少评分/范围/强制响应的内容需求清单requirements');reqs=[]
+    req_ids=[]
+    for req in reqs:
+        if not isinstance(req,dict) or not req.get('id') or not req.get('scope'):
+            errors.append('内容需求缺id或实质scope');continue
+        req_ids.append(req['id']);evidence=req.get('evidence') or []
+        if not evidence or any(not x.get('locator') or not fresh_file(x,base) for x in evidence):errors.append('需求缺真实资料/位置证据：'+req['id'])
+    if len(req_ids)!=len(set(req_ids)):errors.append('内容需求ID重复')
+    if not isinstance(mods,list) or not mods:
+        errors.append('缺少章节—节—内容模块规划modules');return errors
+    capacity=p.get('capacity_review') or {}
+    for key in ('all_requirements_mapped','scope_supports_volume','no_padding_or_repetition'):
+        if capacity.get(key) is not True:errors.append('内容容量专业判断尚未完成：'+key)
+    if not capacity.get('conclusion') or capacity.get('unresolved_gaps')!=[]:errors.append('内容容量缺结论或仍有资料缺口，先质询/关闭')
+    cap=planning_policy(target)['module_page_cap'];mids=[];covered=set();primary=[];figures=0.0
+    chapters={x.get('chapter') for x in p.get('chapter_plan',[]) if isinstance(x,dict)}
+    for m in mods:
+        if not isinstance(m,dict):errors.append('模块不是对象');continue
+        mid=m.get('id');mids.append(mid)
+        if not mid or not m.get('chapter') or not m.get('section') or not m.get('scope') or not m.get('basis'):errors.append('模块缺id/章/节/实质内容/分配依据')
+        if m.get('chapter') not in chapters:errors.append('模块未归入真实章节：'+str(mid))
+        rids=m.get('requirement_ids') or []
+        if not rids or not set(rids).issubset(set(req_ids)):errors.append('模块需求映射缺失或引用未知需求：'+str(mid))
+        covered.update(rids)
+        owners=m.get('primary_for') or []
+        if not set(owners).issubset(set(rids)):errors.append('主响应责任必须属于本模块需求：'+str(mid))
+        primary.extend(owners)
+        for key in ('text_pages','table_pages','figure_pages','estimated_normal_chars','planned_pages') if target else ():
+            if not is_num(m.get(key)) or m[key]<0:errors.append('模块预算字段无效：'+str(mid)+'/'+key)
+        if all(is_num(m.get(k)) for k in ('text_pages','table_pages','figure_pages','planned_pages')):
+            if not 0<m['planned_pages']<=cap:errors.append(f'模块{mid}须拆成不超过{cap}页的实质单元')
+            if abs(m['text_pages']+m['table_pages']+m['figure_pages']-m['planned_pages'])>.05:errors.append('模块正文/表格/图片重复计页或总量不符：'+str(mid))
+            figures+=m['table_pages']+m['figure_pages']
+        if is_num(m.get('text_pages')) and is_num(m.get('estimated_normal_chars')):
+            if (m['text_pages']>0)!=(m['estimated_normal_chars']>0):errors.append('正文页数与字符量估计不对应：'+str(mid))
+        evidence=m.get('evidence') or []
+        if not evidence or any(not x.get('locator') or not fresh_file(x,base) for x in evidence):errors.append('模块内容缺资料支撑：'+str(mid))
+    if target:
+        for chapter in p.get('chapter_plan',[]):
+            grouped=[m for m in mods if m.get('chapter')==chapter.get('chapter')]
+            if all(is_num(m.get('planned_pages')) for m in grouped):
+                total=sum(m['planned_pages'] for m in grouped)
+                rng=chapter.get('page_range') or []
+                if len(rng)==2 and all(is_num(v) for v in rng) and not rng[0]<=total<=rng[1]:
+                    errors.append('章节区间未涵盖所属模块预算：'+str(chapter.get('chapter')))
+    if len(mids)!=len(set(mids)):errors.append('模块ID重复')
+    if set(req_ids)!=covered:errors.append('评分/范围/强制要求没有全部落入内容模块')
+    if sorted(primary)!=sorted(req_ids):errors.append('每项内容需求须有且仅有一个主响应模块')
+    if is_num(p.get('figure_table_pages_estimate')) and abs(figures-p['figure_table_pages_estimate'])>.05:errors.append('全篇图表估算与模块图表之和不符')
+    if not errors and is_num(p.get('reserve_pages')) and is_num(p.get('planned_total_body_pages')):
+        if abs(effective_budget(state,base)-p['planned_total_body_pages'])>.05:errors.append('全篇规划须等于已实测前缀＋剩余模块＋机动量，不能仅声明目标总页数')
+    prefix=[]
+    for stage in STAGES if target else ():
+        selected=(p.get('checkpoint_module_ids') or {}).get(str(stage))
+        if not isinstance(selected,list) or not selected or selected!=mids[:len(selected)]:
+            errors.append(f'{stage}%必须规划连续的模块前缀');continue
+        if stage==75 and (len(selected)<=len(prefix) or selected==mids):errors.append('75%节点须晚于40%且保留后续内容')
+        prefix=selected
+        if not p.get('checkpoint_completion_basis',{}).get(str(stage)):errors.append(f'{stage}%缺按章节/评分责任判断完成度的依据')
+        if all(is_num(m.get('planned_pages')) for m in mods):
+            cp=_prefix_record(state,base)
+            center=float(cp['actual_pages']) if cp and cp.get('module_ids')==selected else sum(m['planned_pages'] for m in mods if m['id'] in selected)
+            slack=max(1,math.ceil(center*.05))
+            expected=[round(max(1,center-slack),2),round(center+slack,2)]
+            rng=p.get('checkpoint_expected_page_ranges',{}).get(str(stage))
+            if not isinstance(rng,list) or len(rng)!=2 or not all(is_num(v) for v in rng) or not expected[0]<=rng[0]<=rng[1]<=expected[1]:errors.append(f'{stage}%范围须依据模块预算/真实实测且不得任意放宽；最大范围{expected}')
+    if planning_policy(target)['pilot_required']:
+        pilot=p.get('pilot_plan') or {}; selected=pilot.get('module_ids') or []
+        if len(set(selected))<2 or not set(selected).issubset(set(mids)):errors.append('长文样章须取至少两个真实模块的代表内容')
+        if set(pilot.get('coverage',[]))!={'narrative','table','figure'} or not pilot.get('basis'):errors.append('样章须覆盖正文、表格、图片并说明代表性')
+    return errors
+
+
+def pilot_errors(state,base,target):
+    if not planning_policy(target)['pilot_required']:return []
+    row=state.get('pilot') or {};errors=[]
+    if row.get('status')!='PASS' or row.get('page_source')!='microsoft_word':return ['长文尚无Microsoft Word样章试排PASS']
+    for key in ('snapshot','report','analysis','format_rules'):
+        item=row.get(key) or {}
+        if not fresh_file(item,base):errors.append('样章证据失效：'+key)
+    if row.get('page_rule')!=state.get('page_rule'):errors.append('样章页数来源与当前项目不一致')
+    if row.get('module_ids')!=(state.get('plan') or {}).get('pilot_plan',{}).get('module_ids'):errors.append('样章代表模块改变，需重新确认/试排')
+    for item in row.get('visual_evidence',[]):
+        if not fresh_file(item,base):errors.append('样章Word导出证据改变或丢失')
+    density=row.get('normal_chars_per_page')
+    if not is_num(density) or density<=0:errors.append('样章缺有效文字密度')
+    else:
+        for m in _modules(state):
+            if abs(m.get('estimated_normal_chars',0)/density-m.get('text_pages',0))>max(.15,m.get('text_pages',0)*.03):errors.append('模块字符量与Word样章密度不符，先重算：'+str(m.get('id')))
+    return errors
+
+
+def production_errors(state,base,target):
+    errors=[]
+    if (state.get('gate') or {}).get('preflight')!='PASS':errors.append('预编制规划未通过')
+    if (state.get('gate') or {}).get('draft_ready')!='PASS':errors.append('draft-ready未通过，当前仅允许规划或样章')
+    if (state.get('gate') or {}).get('plan_hash')!=plan_hash(state):errors.append('规划改变后未重新preflight/draft-ready')
+    errors+=pilot_errors(state,base,target)
+    return errors
+
+
+def cmd_pilot(state_path,document,report_path,analysis_path):
+    state=load_state(state_path);script,vals=discover_page_script()
+    if not script:raise RuntimeError('样章试排须有项目页数来源')
+    errors=startup_errors(state,state_path.parent)+_rule_mismatch(state,script,vals)
+    if state.get('gate',{}).get('preflight')!='PASS' or state.get('gate',{}).get('plan_hash')!=plan_hash(state):errors.append('样章前规划未真实通过或已改变')
+    report=json.loads(report_path.read_text(encoding='utf-8-sig'));analysis=json.loads(analysis_path.read_text(encoding='utf-8-sig'))
+    if report.get('page_source')!='microsoft_word' or report.get('status')!='MEASURED' or report.get('measurement_role')!='pilot' or report.get('document_sha256')!=sha256(document):errors.append('样章须用绑定当前DOCX的Word实际报告，禁止估值冒充')
+    expected={'target_body_pages':vals['EXPECTED_BODY_PAGES'],'page_tolerance':vals['PAGE_TOLERANCE'],'front_matter_pages_excluded':vals['FRONT_MATTER_PAGES']}
+    if any((report.get('project_rule') or {}).get(k)!=v for k,v in expected.items()):errors.append('样章报告项目页数规则不符')
+    pages=(report.get('actual') or {}).get('word_body_pages'); chars=(report.get('actual') or {}).get('word_normal_text_characters')
+    lo,hi=planning_policy(vals['EXPECTED_BODY_PAGES'])['pilot_page_range']
+    if not is_num(pages) or not lo<=pages<=hi:errors.append(f'代表性样章正文页数应在{lo}–{hi}，不足或过大须调整样章')
+    if not is_num(chars) or chars<=0:errors.append('样章报告缺Word测得的非表格文字量')
+    if analysis.get('document_sha256')!=sha256(document) or analysis.get('module_ids')!=(state['plan'].get('pilot_plan') or {}).get('module_ids'):errors.append('样章分析未绑定快照和代表模块')
+    format_item=analysis.get('format_rules') or {}
+    if not fresh_file(format_item,analysis_path.parent):errors.append('样章缺实际项目格式规则快照')
+    for key in ('font_and_spacing_reviewed','table_layout_reviewed','figure_readability_reviewed','photo_frame_layout_reviewed'):
+        if analysis.get(key) is not True:errors.append('未完成样章实际版式复核：'+key)
+    exported=report.get('word_pdf_evidence') or {}
+    if not fresh_file(exported,report_path.parent):errors.append('缺样章测量器导出的实际Word PDF')
+    visuals=analysis.get('visual_evidence') or []
+    if not visuals or any(not fresh_file(x,analysis_path.parent) for x in visuals):errors.append('缺Word导出PDF或页面证据文件')
+    if exported.get('sha256') not in [x.get('sha256') for x in visuals]:errors.append('样章视觉核验未引用本次Word实际导出PDF')
+    component_pages=[analysis.get(k) for k in ('normal_text_pages','table_pages','figure_pages')]
+    if not all(is_num(x) and x>0 for x in component_pages) or not is_num(pages) or abs(sum(component_pages)-pages)>.1:errors.append('样章正文/表格/图片空间估算须与实测总页数相容')
+    import zipfile,xml.etree.ElementTree as ET
+    with zipfile.ZipFile(document) as z:xml=ET.fromstring(z.read('word/document.xml'))
+    if not any(x.tag.endswith('}tbl') for x in xml.iter()) or not any(x.tag.endswith('}blip') for x in xml.iter()):errors.append('样章实际缺表格或嵌入图片')
+    if errors:return emit_gate(errors,'')
+    density=chars/analysis['normal_text_pages']
+    state['pilot']={'visual_evidence':[{**item,'path':str((analysis_path.parent/item['path']).resolve())} for item in visuals],'status':'PASS','page_source':'microsoft_word','page_rule':state['page_rule'],'module_ids':analysis['module_ids'],
+                    'normal_chars_per_page':density,'actual_body_pages':pages,
+                    **{key:{'path':str(path.resolve()),'sha256':sha256(path)} for key,path in [('snapshot',document),('report',report_path),('analysis',analysis_path)]},
+                    'format_rules':{'path':str((analysis_path.parent/format_item['path']).resolve()) if not Path(format_item['path']).is_absolute() else format_item['path'],'sha256':format_item['sha256']}}
+    state['gate']['draft_ready']='BLOCKED';state['phase']='PILOT_BUDGET_CALIBRATION';save_state(state_path,state)
+    print('PILOT_WORD_STATUS=PASS\nNORMAL_CHARS_PER_PAGE='+str(round(density,2)))
+    print('RECALCULATE_MODULE_BUDGETS_THEN_DRAFT_READY')
+    return 0
+
+
+def cmd_draft_ready(state_path):
+    state=load_state(state_path);script,vals=discover_page_script();target=vals['EXPECTED_BODY_PAGES'] if vals else 0
+    errors=startup_errors(state,state_path.parent)
+    if script:errors+=_rule_mismatch(state,script,vals)
+    if state.get('gate',{}).get('preflight')!='PASS' or state.get('gate',{}).get('plan_hash')!=plan_hash(state):errors.append('须先完成当前版本preflight')
+    errors+=detailed_plan_errors(state,state_path.parent,target)+pilot_errors(state,state_path.parent,target)
+    state['gate']['draft_ready']='FAIL' if errors else 'PASS';state['phase']='PLANNING' if errors else 'DRAFTING_ALLOWED';save_state(state_path,state)
+    return emit_gate(errors,'PRE_DRAFT_ALLOWED')
+
+
+def cmd_module_checkpoint(state_path,mid,source_path,review_path):
+    state=load_state(state_path);script,vals=discover_page_script();target=vals['EXPECTED_BODY_PAGES'] if vals else 0
+    errors=production_errors(state,state_path.parent,target)+startup_errors(state,state_path.parent)
+    if any(x.get('status') in ('FAIL','STALE') for x in state.get('checkpoints',{}).values()) and not (mid in state.get('module_registry',{}) and state['module_registry'][mid].get('source_sha256')!=sha256(source_path)):errors.append('阶段校准FAIL尚未返修复测，禁止盲写下一模块；允许更新已保存的实际返修模块')
+    module=next((x for x in _modules(state) if x.get('id')==mid),None)
+    if not module:errors.append('未知模块ID')
+    if module and mid not in state.get('module_registry',{}):
+        order=_ids(state);position=order.index(mid)
+        errors+=registry_errors(state,state_path.parent,order[:position])
+        for stage in STAGES if target else ():
+            prefix=state['plan']['checkpoint_module_ids'][str(stage)]
+            if position>=len(prefix):
+                cp=state.get('checkpoints',{}).get(str(stage)) or {}
+                if cp.get('status') not in ('PASS','PROVISIONAL') or cp.get('module_ids')!=prefix:
+                    errors.append(f'已到{stage}%节点，先完成真实阶段校准再写后续模块')
+                elif not fresh_file({'path':cp.get('snapshot_path'),'sha256':cp.get('document_sha256')},state_path.parent):
+                    errors.append(f'{stage}%阶段快照失效')
+                elif cp.get('page_source')=='microsoft_word':
+                    wr=cp.get('word_report') or {}
+                    if not fresh_file({'path':wr.get('report_file'),'sha256':wr.get('report_sha256')},state_path.parent):errors.append(f'{stage}%阶段Word报告失效')
+    text,normal_chars=_manuscript(source_path);review=json.loads(review_path.read_text(encoding='utf-8-sig'))
+    if len(_normal(text))<200:errors.append('模块正文源过少，不能用标题或占位冒充完成')
+    if review.get('module_id')!=mid or review.get('source_sha256')!=sha256(source_path):errors.append('模块复核记录未绑定实际正文源')
+    for key in ('fact_sources_reviewed','technical_depth_reviewed','interfaces_reviewed','repetition_reviewed'):
+        if review.get(key) is not True:errors.append('模块实质复核缺项：'+key)
+    if not review.get('conclusion'):errors.append('模块复核缺结论')
+    if module and set(review.get('covered_requirement_ids') or [])!=set(module['requirement_ids']):errors.append('模块没有完成其评分/范围责任')
+    quotes=review.get('probe_quotes') or []
+    if len(quotes)<2 or any(len(_normal(q))<40 or _normal(q) not in _normal(text) for q in quotes):errors.append('须有两段确实来自正文的合并探针，每段至少40个非空白字符')
+    if len(set(map(_normal,quotes)))!=len(quotes):errors.append('正文探针重复')
+    if module and module.get('estimated_normal_chars',0)>0 and planning_policy(target)['pilot_required']:
+        ratio=normal_chars/module['estimated_normal_chars']
+        if not .6<=ratio<=1.5:errors.append('实际模块文字量明显偏离经样章校准的预算，须检查内容并调整规划')
+    for key,row in state.get('module_registry',{}).items():
+        if key!=mid and row.get('source_sha256')==sha256(source_path):errors.append('不同模块不能重复使用完全相同正文')
+    if errors:return emit_gate(errors,'')
+    state.setdefault('module_registry',{})[mid]={'status':'complete','source_path':str(source_path.resolve()),'source_sha256':sha256(source_path),
+        'review_path':str(review_path.resolve()),'review_sha256':sha256(review_path),'normal_characters':normal_chars,'probe_quotes':quotes,'saved_at':now_iso()}
+    for cp in state.get('checkpoints',{}).values():
+        if mid in cp.get('module_ids',[]) and cp.get('module_source_hashes',{}).get(mid)!=sha256(source_path):
+            cp['status']='STALE'
+            cp['note']='模块正文更新，旧阶段数据失效，须重新Word测量'
+    state['gate']['final_ready']='BLOCKED'
+    density=(state.get('pilot') or {}).get('normal_chars_per_page')
+    if target and is_num(density) and density>0:
+        cp=_prefix_record(state,state_path.parent)
+        measured_ids=set(cp.get('module_ids',[])) if cp else set()
+        estimated=float(cp['actual_pages']) if cp else 0.0
+        for m in _modules(state):
+            if m['id'] in measured_ids:continue
+            row=state.get('module_registry',{}).get(m['id']) or {}
+            estimated+=row['normal_characters']/density+m['table_pages']+m['figure_pages'] if row.get('status')=='complete' else m['planned_pages']
+        estimated+=state['plan']['reserve_pages']
+        tol=vals['PAGE_TOLERANCE']
+        state['rolling_forecast']={'estimated_body_pages':round(estimated,2),'basis':'Word样章文字密度＋模块实际文字量＋图表预算；非Word最终实测',
+                                   'status':'REVIEW_REQUIRED' if not target-tol<=estimated<=target+tol else 'IN_BUDGET','checked_at':now_iso()}
+        print('MODEL_FORECAST_BODY_PAGES='+str(round(estimated,2)))
+        if state['rolling_forecast']['status']=='REVIEW_REQUIRED':print('MODEL_FORECAST_REVIEW_REQUIRED：先复核内容/图表预算，必要时提前Word测量；估算警示不替代阶段硬门禁')
+    save_state(state_path,state)
+    print('MODULE_SAVED='+mid)
+    return 0
+
+
+def checkpoint_modules_errors(state,base,stage,document):
+    selected=(state.get('plan') or {}).get('checkpoint_module_ids',{}).get(str(stage)) or []
+    return registry_errors(state,base,selected,document)
+
+
+def forecast_remaining(state,selected,actual):
+    remaining=sum(m['planned_pages'] for m in _modules(state) if m['id'] not in selected)
+    return round(actual+remaining+state['plan']['reserve_pages'],3)
 
 
 def main():
@@ -760,6 +1138,7 @@ def main():
     s.add_argument("--document",type=Path,required=True)
     s.add_argument("--report",type=Path,required=True)
     s.add_argument("--stage",type=int,choices=STAGES)
+    s.add_argument("--pilot",action="store_true",help="Word样章试排，测量文字密度并导出实际PDF")
 
     s = sub.add_parser("checkpoint")
     s.add_argument("--stage", type=int, choices=STAGES, required=True)
@@ -770,7 +1149,16 @@ def main():
     s.add_argument("--allow-estimate", action="store_true")
     s.add_argument("--note", default="")
 
-    sub.add_parser("final-ready")
+    s=sub.add_parser("final-ready")
+    s.add_argument("--document",type=Path,required=True)
+    sub.add_parser("draft-ready")
+    s=sub.add_parser("pilot")
+    for key in ("document","report","analysis"):
+        s.add_argument("--"+key,type=Path,required=True)
+    s=sub.add_parser("module-checkpoint")
+    s.add_argument("--id",required=True)
+    s.add_argument("--source",type=Path,required=True)
+    s.add_argument("--review",type=Path,required=True)
     sub.add_parser("status")
     s=sub.add_parser("content-review")
     s.add_argument("--document", type=Path, required=True)
@@ -789,7 +1177,9 @@ def main():
         if a.command=="page-rule":
             return cmd_page_rule()
         if a.command=="run-page-audit":
-            return cmd_run_page_audit(a.document,a.report,a.stage)
+            if a.pilot and a.stage is not None:
+                raise RuntimeError("--pilot与--stage不能同时使用")
+            return cmd_run_page_audit(a.document,a.report,a.stage,a.pilot)
         if a.command == "init":
             return cmd_init(a.state, a.force)
         if a.command == "preflight":
@@ -805,8 +1195,14 @@ def main():
                 a.note,
                 a.document,
             )
+        if a.command == "pilot":
+            return cmd_pilot(a.state,a.document,a.report,a.analysis)
+        if a.command == "draft-ready":
+            return cmd_draft_ready(a.state)
+        if a.command == "module-checkpoint":
+            return cmd_module_checkpoint(a.state,a.id,a.source,a.review)
         if a.command == "final-ready":
-            return cmd_final_ready(a.state)
+            return cmd_final_ready(a.state,a.document)
         if a.command == "content-review":
             return cmd_content_review(a.document,a.review)
         if a.command == "delivery":

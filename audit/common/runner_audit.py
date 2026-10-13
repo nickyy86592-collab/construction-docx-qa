@@ -22,6 +22,7 @@ def load_flow(page_dir):
 def readiness(project_dir, mode):
     if mode=='formal':
         return (project_dir/'design.docx').is_file() and (project_dir/'format_rules.json').is_file()
+    if mode=='pilot':return (project_dir/'pilot.docx').is_file()
     return any((project_dir/f'stage-{stage}.docx').is_file() for stage in (40,75))
 
 def run(project_dir, outdir, mode, stage, photo_stage):
@@ -31,6 +32,9 @@ def run(project_dir, outdir, mode, stage, photo_stage):
         raise RuntimeError('Runtime project directory needs exactly one project page-audit script')
     outdir.mkdir(parents=True,exist_ok=True)
     failures=[]
+    if mode=='pilot':
+        document=project_dir/'pilot.docx'
+        return execute([COMMON/'编制流程门禁.py','--page-dir',project_dir,'run-page-audit','--pilot','--document',document,'--report',outdir/'pilot-word-pages.json'])
     if mode=='stage':
         stages=[stage] if stage is not None else [n for n in (40,75) if (project_dir/f'stage-{n}.docx').is_file()]
         if not stages:
@@ -65,7 +69,7 @@ def run(project_dir, outdir, mode, stage, photo_stage):
 
 def main():
     p=argparse.ArgumentParser()
-    p.add_argument('--mode',choices=('formal','stage'),required=True)
+    p.add_argument('--mode',choices=('formal','stage','pilot'),required=True)
     p.add_argument('--project-dir',type=Path,required=True)
     p.add_argument('--outdir',type=Path,default=Path('output/project'))
     p.add_argument('--stage',type=int,choices=(40,75))

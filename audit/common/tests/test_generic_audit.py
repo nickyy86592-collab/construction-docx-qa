@@ -57,27 +57,8 @@ expect('空照片规则被拦截',bool(statuses(passdoc,rules|{'required_real_ph
 rules_path=OUT/'format_rules.json';rules_path.write_text(json.dumps(rules,ensure_ascii=False))
 rc=subprocess.run([sys.executable,str(ROOT/'scripts/Word正式交付硬审（不含页数）.py'),str(passdoc),'--rules',str(rules_path),'--static-only','--report',str(OUT/'static.json')],capture_output=True,text=True)
 expect('静态CLI及文件哈希报告通过',rc.returncode==0 and json.loads((OUT/'static.json').read_text())['document_sha256']==f.sha256(passdoc))
-statepath=OUT/'state.json';statepath.unlink(missing_ok=True);f.cmd_init(statepath,False);state=f.load_state(statepath)
-state['plan']={'planned_total_body_pages':TARGET,'chapter_plan':[{'chapter':'施工方法','basis':'技术复杂度','page_range':[TARGET*.45,TARGET*.6]},{'chapter':'保障措施','basis':'评分权重','page_range':[TARGET*.38,TARGET*.55]}],'figure_table_pages_estimate':5,'reserve_pages':1,'planning_notes':'按评分权重和技术复杂度计算总体容量及机动量','checkpoint_expected_page_ranges':{'40':[TARGET*.35,TARGET*.48],'75':[TARGET*.68,TARGET*.82]}}
-f.save_state(statepath,state)
-expect('未答最新文件且启动证据缺失被拦截',f.cmd_preflight(statepath)==2)
+statepath=OUT/'state.json'
 source=OUT/'source.txt';source.write_text('Synthetic test source: general 4.5 MPa, detail 4.0 MPa. Not project evidence.')
-state['startup']={'sources':[{'path':str(source),'sha256':f.sha256(source),'role':'tender'}],'latest_updates':{'status':'confirmed_none','asked_at':'2026-10-12','reply_text':'测试用答复','reply_source':'测试会话记录'},'critical_questions':[],'questions_review':'测试资料范围完整','batch_plan':{'count':1,'reason':'一次完成','batches':['全文']},'word_channel':'unavailable','word_capability_evidence':'Linux不能调用Word','real_photo_slots':[{'name':'现场沟塘','location':'第一章','basis':'现场技术约束'}]}
-f.save_state(statepath,state);expect('真实结构启动记录通过',f.cmd_preflight(statepath)==0)
-state=f.load_state(statepath);bad=copy.deepcopy(state);bad['startup']['batch_plan']={'count':4,'reason':'分批','batches':[1,2,3,4]};f.save_state(statepath,bad);expect('超过三批被拦截',f.cmd_preflight(statepath)==2)
-f.save_state(statepath,state)
-expect('无阶段记录禁止最终硬审',f.cmd_final_ready(statepath)==2)
-# Word report fixtures are synthetic schema tests, not actual Word measurements.
-for stage,actual in [(40,round(TARGET*.4)),(75,round(TARGET*.75))]:
- rpt={'page_source':'microsoft_word','status':'MEASURED','stage_percent':stage,'document_sha256':f.sha256(passdoc),'actual':{'word_body_pages':actual,'word_version':'synthetic'},'project_rule':{'target_body_pages':TARGET,'page_tolerance':TOLERANCE,'front_matter_pages_excluded':FRONT}}
- rp=OUT/f'synthetic-{stage}.json';rp.write_text(json.dumps(rpt))
- if stage==40:
-  badrp=OUT/'wronghash.json';badrp.write_text(json.dumps(rpt|{'document_sha256':'wrong'}))
-  try:f.cmd_checkpoint(statepath,40,badrp,None,'',False,'',passdoc);yes=False
-  except RuntimeError:yes=True
-  expect('阶段报告错误哈希被拦截',yes)
- expect('阶段报告结构校验'+str(stage),f.cmd_checkpoint(statepath,stage,rp,None,'',False,'测试schema',passdoc)==0)
-expect('双阶段结构记录允许最终硬审',f.cmd_final_ready(statepath)==0)
 review={'document_sha256':f.sha256(passdoc),'source_checks':[{'item':n,'status':'verified','conclusion':'synthetic','evidence':[{'path':str(source),'sha256':f.sha256(source),'locator':'synthetic lines'}]} for n in f.REVIEW_ITEMS], 'latest_confirmation':{'confirmed_at':'test','reply_source':'test','conclusion':'test'},'parameters':[{'name':'强度','scope':'路面','cross_source_search':'说明和结构图','occurrences':[{'path':str(source),'sha256':f.sha256(source),'locator':'test1','value':4.5,'unit':'MPa','scope':'路面'},{'path':str(source),'sha256':f.sha256(source),'locator':'test2','value':4.0,'unit':'MPa','scope':'入户道路'}],'status':'consistent','decision':'test','body_locations':[{'location':'第一章','quote':'路面强度按4.5MPa进行材料报审。','value':4.5,'unit':'MPa','scope':'路面'}]}], 'conflicts':[], 'construction_language_review':{'all_paragraphs_reviewed':True,'conclusion':'test'},'visual_review':{'three_color_figures_reviewed':True,'caption_photo_reviewed':True,'conclusion':'test'}}
 rp=OUT/'review.json';rp.write_text(json.dumps(review));expect('4.5及4.0差异未解释被拦截',bool(f.validate_content_review(passdoc,rp)[0]))
 review['parameters'][0].update(status='resolved',resolution_evidence='Synthetic scenario: differing scopes reviewed');rp.write_text(json.dumps(review));expect('有部位解释的溯源结构通过',not f.validate_content_review(passdoc,rp)[0])
@@ -95,7 +76,7 @@ wp=OUT/'synthetic-word.json';wp.write_text(json.dumps(word))
 pg=OUT/'synthetic-pages.json';pg.write_text(json.dumps({'status':'PASS','page_source':'microsoft_word','document_sha256':f.sha256(passdoc),'rule':{'body_pages_target':TARGET,'page_tolerance':TOLERANCE,'front_matter_pages_excluded':FRONT}}))
 sc=OUT/'synthetic-score.json';sc.write_text(json.dumps({'status':'PASS','phase':'final','document_sha256':f.sha256(passdoc),'checks':[]}))
 wr=OUT/'warnings.json';wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':[]}))
-a=Namespace(document=passdoc,state=statepath,mode='full',review=rp,static_report=staticpath,word_report=wp,page_report=pg,score_report=sc,warning_review=wr)
+a=Namespace(document=passdoc,state=statepath,mode='local-review',review=rp,static_report=staticpath,word_report=wp,page_report=pg,score_report=sc,warning_review=wr)
 expect('交付汇总schema正例允许编制稿',f.cmd_delivery(a)==0)
 wp.write_text(json.dumps(word|{'document_sha256':'old version'}));expect('交付汇总拒绝旧版本Word报告',f.cmd_delivery(a)==2);wp.write_text(json.dumps(word))
 wp.write_text(json.dumps(word|{'rules_sha256':'altered'}));expect('交付汇总拒绝不同格式规则指纹',f.cmd_delivery(a)==2);wp.write_text(json.dumps(word))

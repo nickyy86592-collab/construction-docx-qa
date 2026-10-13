@@ -20,5 +20,7 @@ jobs:
       - run: python -m pip install Pillow python-docx PyYAML
       - name: Compile generic scripts
         run: python -m compileall -q audit/common
-      - name: Test runtime project replacement and audit gates
+      - name: Test graphics, provenance, delivery, and runtime project replacement
         run: python audit/common/tests/test_generic_audit.py
+      - name: Test long-document content planning, sample and module gates
+        run: python audit/common/tests/test_long_document.py
