@@ -21,6 +21,13 @@ jobs:
           ready=$(python audit/common/runner_audit.py --mode pilot --project-dir input/project --check-ready)
           echo "ready=$ready" >> "$GITHUB_OUTPUT"
           echo "PILOT_INPUT_READY=$ready"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pilot-input-${{ github.run_id }}
+          path: |
+            audit/common/
+            input/project/
+          if-no-files-found: error
   measure:
     needs: inputs
     if: needs.inputs.outputs.ready == 'true'
@@ -32,8 +39,9 @@ jobs:
     env:
       PYTHONUTF8: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
+          name: pilot-input-${{ github.run_id }}
           path: stage-${{ github.run_id }}
       - name: Prepare cached Python and Word COM
         shell: powershell
