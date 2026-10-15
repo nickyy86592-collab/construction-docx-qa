@@ -1,0 +1,68 @@
+{
+  "required_level1_titles": [
+    "第一章 编制说明与工程总体认识",
+    "第二章 总体施工部署与现场组织",
+    "第三章 施工方案与技术措施"
+  ],
+  "font_rules": {
+    "body": {
+      "name": "宋体",
+      "name_east_asia": "宋体",
+      "size_pt": 14
+    },
+    "heading1": {
+      "name": "宋体",
+      "name_east_asia": "宋体",
+      "size_pt": 16
+    },
+    "heading2": {
+      "name": "宋体",
+      "name_east_asia": "宋体",
+      "size_pt": 16
+    },
+    "heading3": {
+      "name": "宋体",
+      "name_east_asia": "宋体",
+      "size_pt": 16
+    }
+  },
+  "required_figures": [
+    {
+      "name": "施工功能分区示意图",
+      "keywords": [
+        "施工功能分区示意图"
+      ],
+      "hard": true,
+      "color_required": true
+    },
+    {
+      "name": "施工进度横道图",
+      "keywords": [
+        "施工进度横道图"
+      ],
+      "hard": true,
+      "color_required": true
+    },
+    {
+      "name": "施工进度网络图",
+      "keywords": [
+        "施工进度网络图"
+      ],
+      "hard": true,
+      "color_required": true
+    }
+  ],
+  "required_real_photo_slots": [
+    {
+      "name": "洞口及转弯处运输净空",
+      "replaced": false
+    },
+    {
+      "name": "旧罐与罐室连接及周边状态",
+      "replaced": false
+    }
+  ],
+  "photo_delivery_stage": "draft",
+  "artifact_scope": "第一批17节编制稿；待补现场照片；不代表全书最终验收；封面加一级目录依用户指令占1页",
+  "allow_front_matter_break": true
+}

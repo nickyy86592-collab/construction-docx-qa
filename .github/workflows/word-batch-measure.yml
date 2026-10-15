@@ -25,7 +25,7 @@ jobs:
   measure:
     needs: inputs
     runs-on: [self-hosted, Windows, X64, word-audit]
-    timeout-minutes: 20
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: batch-${{ github.run_id }}
@@ -43,6 +43,11 @@ jobs:
         shell: powershell
         run: |
           & $env:AUDIT_PYTHON audit/batch/batch_measure.py --document input/batch/batch.docx --outdir output/batch
+          exit $LASTEXITCODE
+      - name: Audit first-batch format with Microsoft Word
+        shell: powershell
+        run: |
+          & $env:AUDIT_PYTHON audit/batch/formal_audit.py input/batch/batch.docx --rules input/batch/format_rules.json --page-dir input/batch/page_rule --report output/batch/format-word.json --evidence-dir output/batch/format-evidence
           exit $LASTEXITCODE
       - uses: actions/upload-artifact@v4
         if: always()
