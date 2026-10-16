@@ -208,13 +208,38 @@ def page_of_range(rng) -> int:
         return -1
 
 
+_physical_page_starts = {}
+
 def get_page_range(doc, page_num: int, page_count: int):
-    start = doc.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=page_num).Start
-    if page_num < page_count:
-        end = doc.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=page_num + 1).Start
-    else:
-        end = doc.Content.End
-    return doc.Range(start, end)
+    # GoTo(Page, Absolute, Count) can follow restarted display numbering.
+    # Audit ranges must use physical document pages, verified with Information(3).
+    content_end = int(doc.Content.End)
+    key = (str(doc.FullName), content_end, page_count)
+    starts = _physical_page_starts.setdefault(key, {1: 0, page_count + 1: content_end})
+    def physical_start(target):
+        if target in starts:
+            return starts[target]
+        candidate = int(doc.GoTo(What=WD_GOTO_PAGE, Which=WD_GOTO_ABSOLUTE, Count=target).Start)
+        at_page = page_of_range(doc.Range(candidate, candidate))
+        before_page = page_of_range(doc.Range(max(0, candidate - 1), max(0, candidate - 1)))
+        if at_page == target and before_page < target:
+            starts[target] = candidate
+            return candidate
+        low, high = 0, content_end
+        while low < high:
+            middle = (low + high) // 2
+            actual = page_of_range(doc.Range(middle, middle))
+            if actual < 1:
+                raise AuditError('无法取得物理页码，不能构造页面审核范围')
+            if actual < target:
+                low = middle + 1
+            else:
+                high = middle
+        if page_of_range(doc.Range(low, low)) != target:
+            raise AuditError(f'无法定位物理第{target}页')
+        starts[target] = low
+        return low
+    return doc.Range(physical_start(page_num), physical_start(page_num + 1))
 
 
 def iter_find_ranges(doc, find_text: str) -> List[Tuple[int, int, int]]:
@@ -635,6 +660,14 @@ def check_pagination_controls(doc, records: List[Dict[str, Any]], headings: List
             "section_start": start_type,
             "layout_changed": layout_changed,
         }
+        # Only the first cover/contents-to-body boundary is permitted.
+        # All later same-layout forced heading sections retain the hard failure.
+        if (idx == 2 and rules.get("allow_front_matter_break", False)
+                and body_start_page > int(rules["front_page"])
+                and first["page"] == body_start_page):
+            out.append(CheckResult("前置页与正文分隔", "PASS",
+                "按既定规则允许封面目录与正文之间唯一的新页分节；不放宽正文内部标题分页检查。", detail))
+            continue
         if heading_level in (1, 2, 3) and not layout_changed:
             heading_forced.append(detail)
         else:
