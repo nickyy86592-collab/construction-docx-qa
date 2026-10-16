@@ -1,0 +1,67 @@
+name: Third batch Word measurement
+on:
+  push:
+    branches: [main]
+    paths: ['input/web-third/request.json', '.github/workflows/word-web-third.yml']
+permissions:
+  contents: read
+concurrency:
+  group: word-web-third
+  cancel-in-progress: false
+jobs:
+  inputs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-third-input-${{ github.run_id }}
+          path: |
+            input/web-third/
+            audit/common/prepare_python.ps1
+          if-no-files-found: error
+  word:
+    needs: inputs
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-third-input-${{ github.run_id }}
+          path: web-third-${{ github.run_id }}
+      - name: Microsoft Word probe or measurement
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Location 'web-third-${{ github.run_id }}'
+          New-Item -ItemType Directory -Force output | Out-Null
+          $request = Get-Content -Raw -Encoding UTF8 'input/web-third/request.json' | ConvertFrom-Json
+          if ($request.mode -eq 'probe') {
+            $word = $null; $doc = $null
+            try {
+              $word = New-Object -ComObject Word.Application
+              $word.Visible = $false; $word.DisplayAlerts = 0
+              $doc = $word.Documents.Add()
+              $doc.Content.Text = 'Word channel verification'
+              $doc.Repaginate()
+              @{status='PASS';mode='probe';page_source='microsoft_word';word_version=$word.Version;pages=$doc.ComputeStatistics(2);run_id=$env:GITHUB_RUN_ID;measured_at=(Get-Date).ToString('o')} | ConvertTo-Json | Set-Content -Encoding UTF8 output/probe.json
+            } finally {
+              if ($null -ne $doc) {$doc.Close(0);[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($doc)}
+              if ($null -ne $word) {$word.Quit();[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($word)}
+            }
+          } else {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -UseBasicParsing -Uri $request.download_url -OutFile payload.zip
+            $hash=(Get-FileHash payload.zip -Algorithm SHA256).Hash.ToLower()
+            if ($hash -ne $request.payload_sha256) {throw 'Payload integrity mismatch'}
+            Expand-Archive -LiteralPath payload.zip -DestinationPath payload -Force
+            & 'audit/common/prepare_python.ps1'
+            & $env:AUDIT_PYTHON payload/word_job.py --request input/web-third/request.json --root payload --output output
+            if ($LASTEXITCODE -ne 0) {throw "Word job returned $LASTEXITCODE"}
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: word-web-third-${{ github.run_id }}
+          path: web-third-${{ github.run_id }}/output/
+          if-no-files-found: warn
