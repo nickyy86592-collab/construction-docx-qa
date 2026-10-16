@@ -34,7 +34,7 @@ jobs:
   word:
     needs: inputs
     runs-on: [self-hosted, Windows, X64, word-audit]
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/download-artifact@v4
         with:
