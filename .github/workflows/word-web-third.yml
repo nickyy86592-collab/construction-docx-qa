@@ -2,7 +2,7 @@ name: Third batch Word measurement
 on:
   push:
     branches: [main]
-    paths: ['input/web-third/request.json', '.github/workflows/word-web-third.yml']
+    paths: ['input/web-third/request.json']
 permissions:
   contents: read
 concurrency:
@@ -13,12 +13,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Stage verified payload before Windows startup
+        shell: python
+        run: |
+          import json, urllib.request, hashlib
+          from pathlib import Path
+          request=json.loads(Path('input/web-third/request.json').read_text('utf-8'))
+          if request.get('mode') != 'probe':
+              p=Path('word-payload.zip')
+              urllib.request.urlretrieve(request['download_url'], p)
+              assert hashlib.sha256(p.read_bytes()).hexdigest() == request['payload_sha256'], 'Payload integrity mismatch'
       - uses: actions/upload-artifact@v4
         with:
           name: web-third-input-${{ github.run_id }}
           path: |
             input/web-third/
             audit/common/prepare_python.ps1
+            word-payload.zip
           if-no-files-found: error
   word:
     needs: inputs
@@ -51,7 +62,7 @@ jobs:
             }
           } else {
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            Invoke-WebRequest -UseBasicParsing -Uri $request.download_url -OutFile payload.zip
+            Move-Item -LiteralPath word-payload.zip -Destination payload.zip -Force
             $hash=(Get-FileHash payload.zip -Algorithm SHA256).Hash.ToLower()
             if ($hash -ne $request.payload_sha256) {throw 'Payload integrity mismatch'}
             Expand-Archive -LiteralPath payload.zip -DestinationPath payload -Force
