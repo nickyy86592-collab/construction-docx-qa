@@ -1,12 +1,12 @@
 {
   "mode": "measure",
-  "download_url": "https://sdmntprjapaneast.oaiusercontent.com/files/00000000-ffc8-8209-8f83-34bc812d09e3/raw?se=2026-10-20T01%3A47%3A09Z&sp=r&sv=2026-02-06&sr=b&scid=01a156ea-208d-7cac-bfba-291a0ad749a1&skoid=bb372dd6-3b2a-4af2-b355-c26497ba23cd&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-19T21%3A56%3A36Z&ske=2026-10-20T21%3A56%3A36Z&sks=b&skv=2026-02-06&sig=YfxCoQd3xPThzmJtIHJ2TKc412H8Kh8z0OtBko1QEyc%3D",
-  "payload_sha256": "7bf2cb9d7daf4950c66b287f7afffa883d726e51470134ee88cd7969ca8c5e46",
+  "download_url": "https://sdmntprjapaneast.oaiusercontent.com/files/00000000-d330-8209-bfcf-55b16774b2aa/raw?se=2026-10-20T01%3A53%3A05Z&sp=r&sv=2026-02-06&sr=b&scid=01a156ea-208d-7cac-bfba-291a0ad749a1&skoid=bb372dd6-3b2a-4af2-b355-c26497ba23cd&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-19T23%3A13%3A49Z&ske=2026-10-20T23%3A13%3A49Z&sks=b&skv=2026-02-06&sig=aHxiayarNa4lY0Z30Afz1jKj/FnbkeJx%2BT5lmeZ8Nck%3D",
+  "payload_sha256": "923f52d7632ec611e5fd7ec7e0ab717e592efb0a1ca778cbf3dd6031624963e2",
   "document": "design.docx",
-  "measurement_role": "local-revision-75",
-  "stage_percent": 75,
+  "measurement_role": "local-revision-final-candidate",
   "freeze_output": true,
   "update_fields": true,
-  "format_audit": false,
-  "page_audit": false
+  "format_audit": true,
+  "page_audit": true,
+  "require_body_pages": 400
 }
