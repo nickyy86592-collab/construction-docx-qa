@@ -1,9 +1,11 @@
 {
-  "mode": "finish_r97_toc_only",
-  "download_url": "https://sdmntprjapaneast.oaiusercontent.com/files/00000000-a268-8209-aba7-e4f72050177f/raw?se=2026-10-20T03%3A06%3A15Z&sp=r&sv=2026-02-06&sr=b&scid=01a156ea-208d-7cac-bfba-291a0ad749a1&skoid=bb372dd6-3b2a-4af2-b355-c26497ba23cd&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-20T00%3A01%3A24Z&ske=2026-10-21T00%3A01%3A24Z&sks=b&skv=2026-02-06&sig=XeyEsnV2tj4nAkGrtlGfRomU02WuKehCbCTQ8NNlpJs%3D",
-  "payload_sha256": "8059e1d15e4347e59433467e65d9ae340df6ac9397cfff8ab7cfc45454f540de",
-  "previous_run_id": 39356661344,
-  "continuation_run_id": 39361291391,
-  "prior_document_sha256": "a3d52f81c10916d74a4b56f9a8531e00a918e79bd3693a624b57d81ea7a44bbb",
-  "expected_document_sha256": "58d1020b6a2036473b988bdda90a8b177092695f2db3fc2db6b7d6318107ce24"
+  "mode": "measure",
+  "download_url": "https://sdmntprjapaneast.oaiusercontent.com/files/00000000-3ec8-8209-a91d-2f999a56c006/raw?se=2026-10-20T03%3A16%3A00Z&sp=r&sv=2026-02-06&sr=b&scid=01a156ea-208d-7cac-bfba-291a0ad749a1&skoid=bb372dd6-3b2a-4af2-b355-c26497ba23cd&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-20T02%3A12%3A03Z&ske=2026-10-21T02%3A12%3A03Z&sks=b&skv=2026-02-06&sig=wtAFQRr3KHQGf3M7kwSfot8UMS5l0Hgdq23uyVjDhYM%3D",
+  "payload_sha256": "52aada866cd230d77c5bbea91d348f60264c5f490356affbed4d20e5ca0c1ae8",
+  "document": "design.docx",
+  "measurement_role": "final_report_visual_QA_only",
+  "freeze_output": true,
+  "update_fields": false,
+  "format_audit": false,
+  "page_audit": false
 }
