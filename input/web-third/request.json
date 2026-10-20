@@ -1,1 +1,4 @@
-{"mode":"measure","download_url":"https://sdmntprjapaneast.oaiusercontent.com/files/00000000-6e18-8209-917f-b9f84c21a3f8/raw?se=2026-10-17T00%3A27%3A48Z&sp=r&sv=2026-02-06&sr=b&scid=01a14738-2e50-7d20-b650-3fb65871bced&skoid=bb372dd6-3b2a-4af2-b355-c26497ba23cd&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-16T22%3A13%3A57Z&ske=2026-10-17T22%3A13%3A57Z&sks=b&skv=2026-02-06&sig=IU%2Bw2tGgjy7LkTeZlGdwmUCCFpCf2X%2Bs87i7YAPOFl0%3D","payload_sha256":"df08fdb7b0797e80152a1fec977388608b41d188aff7aed255f027a4be14adad","document":"design.docx","measurement_role":"final","freeze_output":true,"update_fields":true,"format_audit":true,"page_audit":true,"require_body_pages":400}
+{
+  "mode": "probe",
+  "request_id": "oiltank-local-revision-20261020"
+}
