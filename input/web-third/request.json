@@ -1,8 +1,9 @@
 {
-  "mode": "resume_r97_toc",
-  "download_url": "https://sdmntprjapaneast.oaiusercontent.com/files/00000000-5274-8209-8f38-26c75fc41aed/raw?se=2026-10-20T02%3A57%3A45Z&sp=r&sv=2026-02-06&sr=b&scid=01a156ea-208d-7cac-bfba-291a0ad749a1&skoid=bb372dd6-3b2a-4af2-b355-c26497ba23cd&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-19T23%3A04%3A52Z&ske=2026-10-20T23%3A04%3A52Z&sks=b&skv=2026-02-06&sig=UyZ/AGsbZ5zt3RPhK2tVpSsy12WHtGNeh58srblAY1Y%3D",
-  "payload_sha256": "5a2aff41fbfb326cf7e9fa1037de2b74509e72df3492f3df28dcc851c929d7c3",
+  "mode": "finish_r97_toc_only",
+  "download_url": "https://sdmntprjapaneast.oaiusercontent.com/files/00000000-a268-8209-aba7-e4f72050177f/raw?se=2026-10-20T03%3A06%3A15Z&sp=r&sv=2026-02-06&sr=b&scid=01a156ea-208d-7cac-bfba-291a0ad749a1&skoid=bb372dd6-3b2a-4af2-b355-c26497ba23cd&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-20T00%3A01%3A24Z&ske=2026-10-21T00%3A01%3A24Z&sks=b&skv=2026-02-06&sig=XeyEsnV2tj4nAkGrtlGfRomU02WuKehCbCTQ8NNlpJs%3D",
+  "payload_sha256": "8059e1d15e4347e59433467e65d9ae340df6ac9397cfff8ab7cfc45454f540de",
   "previous_run_id": 39356661344,
+  "continuation_run_id": 39361291391,
   "prior_document_sha256": "a3d52f81c10916d74a4b56f9a8531e00a918e79bd3693a624b57d81ea7a44bbb",
   "expected_document_sha256": "58d1020b6a2036473b988bdda90a8b177092695f2db3fc2db6b7d6318107ce24"
 }
