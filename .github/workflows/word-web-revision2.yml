@@ -31,7 +31,7 @@ jobs:
           manifest={}
           with zipfile.ZipFile(io.BytesIO(archive)) as z:
               for target in ['action.yml','dist/upload/index.js']:
-                  matches=[n for n in z.namelist() if n.endswith('/'+target)]
+                  matches=[n for n in z.namelist() if '/'.join(n.split('/')[1:]) == target]
                   assert len(matches)==1, target
                   data=z.read(matches[0])
                   dest=Path('upload-action')/target
