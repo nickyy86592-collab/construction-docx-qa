@@ -1,12 +1,12 @@
 {
   "mode": "measure",
   "document": "design.docx",
-  "measurement_role": "second_revision_final_audit_report",
+  "measurement_role": "second_revision_final_audit_report_header_binding",
   "update_fields": true,
   "freeze_output": true,
   "format_audit": false,
   "page_audit": false,
-  "payload_sha256": "9df55a77c42ff59db4904a1a6ac55e3bdf86107beeab32cde65e1a2cdede3564",
-  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-c5ac-81fa-a469-944a0423d83c/raw?se=2026-10-20T09%3A39%3A24Z&sp=r&sv=2026-02-06&sr=b&scid=01a15858-c90a-7ab6-b591-9d0f1175cc66&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-20T07%3A38%3A12Z&ske=2026-10-21T07%3A38%3A12Z&sks=b&skv=2026-02-06&sig=zTSmzvzsNz8f%2B21zhmQlRY6WrJM/%2Bt0il5hMca02K%2BE%3D",
-  "note": "Report-only native Word opening, field update, freeze and PDF evidence; main frozen 400-page document and completed formal checks remain unchanged."
+  "payload_sha256": "d2fd94a673eeb36468e22e00cd9c22b821bed708b264db710e9108adfc28bd09",
+  "download_url": "https://sdmntprcentralus.oaiusercontent.com/files/00000000-d0d4-81f5-af7c-f41505561954/raw?se=2026-10-20T09%3A43%3A46Z&sp=r&sv=2026-02-06&sr=b&scid=01a15858-c90a-7ab6-b591-9d0f1175cc66&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-20T01%3A59%3A02Z&ske=2026-10-21T01%3A59%3A02Z&sks=b&skv=2026-02-06&sig=/FeEe8pLnD3LdD8OUsoZyKBgJaGx5LlkR558twC7FpU%3D",
+  "note": "Report-only table header keep-with-next correction. Main document remains frozen and complete."
 }
