@@ -1,6 +1,6 @@
 {
   "mode": "measure",
-  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-60dc-81fa-8985-13dd808a581f/raw?se=2026-10-20T08%3A40%3A26Z&sp=r&sv=2026-02-06&sr=b&scid=01a15858-c90a-7ab6-b591-9d0f1175cc66&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-19T21%3A09%3A36Z&ske=2026-10-20T21%3A09%3A36Z&sks=b&skv=2026-02-06&sig=LQ0PzxLV2Wm2nAopVf/eHDJWsBVjlQFOayqew%2BpcLP8%3D",
+  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-b77c-81fa-b494-a85467f597a1/raw?se=2026-10-20T08%3A41%3A46Z&sp=r&sv=2026-02-06&sr=b&scid=01a15858-c90a-7ab6-b591-9d0f1175cc66&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-20T07%3A32%3A17Z&ske=2026-10-21T07%3A32%3A17Z&sks=b&skv=2026-02-06&sig=vnPEfiE0m4tLIf9ZCgiCdpZrnP7jIloATCg/mn8o9Xs%3D",
   "payload_sha256": "f189e4c5cccef647d80602e9eb08cf8ab655c0d343a44ebebf6edb6e560be7bd",
   "document": "design.docx",
   "measurement_role": "revision2_checkpoint_40",
@@ -11,5 +11,5 @@
   "page_audit": false,
   "project_rule_source": "油罐项目页数硬审.py",
   "resume_reason": "Original Word startup failed before COM due to codeload upload-artifact timeout; same exact revision40 document, audit rules unchanged",
-  "transfer_refresh_reason": "Fresh transfer reference after previous staged-input link expired before new workflow started"
+  "transfer_refresh_reason": "Refresh while applying root-only pinned action archive selection"
 }
