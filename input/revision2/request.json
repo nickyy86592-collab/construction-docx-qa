@@ -1,13 +1,13 @@
 {
   "mode": "measure",
-  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-28d8-81fa-9198-4dfec5e9b867/raw?se=2026-10-20T08%3A50%3A50Z&sp=r&sv=2026-02-06&sr=b&scid=01a15858-c90a-7ab6-b591-9d0f1175cc66&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-20T01%3A58%3A57Z&ske=2026-10-21T01%3A58%3A57Z&sks=b&skv=2026-02-06&sig=MhZSCUuOkBHHoHUbK8XeARTCeSXGZ8Yx/2obXaVgjJM%3D",
-  "payload_sha256": "864830dfeb3401def3a97477d87fa4b7da6d6391a73ab3bdf7898c1f06cfba50",
+  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-6328-81fa-8bb8-564968c67b60/raw?se=2026-10-20T08%3A58%3A58Z&sp=r&sv=2026-02-06&sr=b&scid=01a15858-c90a-7ab6-b591-9d0f1175cc66&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-20T01%3A24%3A54Z&ske=2026-10-21T01%3A24%3A54Z&sks=b&skv=2026-02-06&sig=nGk/gG0Hz4Q6TLhdh/xHKlF3OHcI92RTKVQRmkpN/aI%3D",
+  "payload_sha256": "66cf6c5f0f3612ef286ebf7dba69ca29d62b41650f8395869db6046a2c2ef565",
   "document": "design.docx",
-  "measurement_role": "revision2_checkpoint_75",
-  "stage_percent": 75,
+  "measurement_role": "revision2_final_freeze",
   "freeze_output": true,
   "update_fields": true,
   "format_audit": false,
-  "page_audit": false,
+  "page_audit": true,
+  "require_body_pages": 400,
   "project_rule_source": "油罐项目页数硬审.py"
 }
