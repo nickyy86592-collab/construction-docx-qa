@@ -1,10 +1,12 @@
 {
-  "mode": "formal_audit",
-  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-39a4-81fa-8bb7-65546af1669d/raw?se=2026-10-20T09%3A06%3A14Z&sp=r&sv=2026-02-06&sr=b&scid=01a15858-c90a-7ab6-b591-9d0f1175cc66&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-20T05%3A54%3A28Z&ske=2026-10-21T05%3A54%3A28Z&sks=b&skv=2026-02-06&sig=mvtcdnsLMX3dG6HwEsi5q0V1U5HSTXHDyZfbsrMKd2Q%3D",
-  "payload_sha256": "fc7306c3a5907e9cedfe986767aacfee5c90407a5fa65bb6b8048a19cb79bcf8",
-  "expected_document_sha256": "1cc53bcacee41301f09ae74d7198a586c0b4661a2fcd508ab8188ff4040a9eea",
-  "document": "final.docx",
-  "measurement_role": "revision2_full_formal_audit_frozen400",
-  "full_format_enumeration": true,
-  "page_audit": true
+  "mode": "measure",
+  "document": "design.docx",
+  "measurement_role": "second_revision_final_audit_report",
+  "update_fields": true,
+  "freeze_output": true,
+  "format_audit": false,
+  "page_audit": false,
+  "payload_sha256": "9df55a77c42ff59db4904a1a6ac55e3bdf86107beeab32cde65e1a2cdede3564",
+  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-c5ac-81fa-a469-944a0423d83c/raw?se=2026-10-20T09%3A39%3A24Z&sp=r&sv=2026-02-06&sr=b&scid=01a15858-c90a-7ab6-b591-9d0f1175cc66&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-20T07%3A38%3A12Z&ske=2026-10-21T07%3A38%3A12Z&sks=b&skv=2026-02-06&sig=zTSmzvzsNz8f%2B21zhmQlRY6WrJM/%2Bt0il5hMca02K%2BE%3D",
+  "note": "Report-only native Word opening, field update, freeze and PDF evidence; main frozen 400-page document and completed formal checks remain unchanged."
 }
