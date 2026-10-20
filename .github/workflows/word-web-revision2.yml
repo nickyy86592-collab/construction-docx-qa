@@ -1,0 +1,102 @@
+name: Revision 2 native Word audit
+on:
+  push:
+    branches: [main]
+    paths: ['input/revision2/request.json']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: word-revision2
+  cancel-in-progress: false
+jobs:
+  inputs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage verified Word payload and pinned upload action
+        shell: python
+        run: |
+          import json, urllib.request, hashlib, zipfile, io
+          from pathlib import Path
+          request=json.loads(Path('input/revision2/request.json').read_text('utf-8'))
+          with urllib.request.urlopen(request['download_url'], timeout=60) as response:
+              payload=response.read()
+          assert hashlib.sha256(payload).hexdigest()==request['payload_sha256'], 'Word payload integrity mismatch'
+          Path('word-payload.zip').write_bytes(payload)
+          action_sha='ea165f8d65b6e75b540449e92b4886f43607fa02'
+          url='https://api.github.com/repos/actions/upload-artifact/zipball/'+action_sha
+          with urllib.request.urlopen(url, timeout=60) as response:
+              archive=response.read()
+          manifest={}
+          with zipfile.ZipFile(io.BytesIO(archive)) as z:
+              for target in ['action.yml','dist/upload/index.js']:
+                  matches=[n for n in z.namelist() if n.endswith('/'+target)]
+                  assert len(matches)==1, target
+                  data=z.read(matches[0])
+                  dest=Path('upload-action')/target
+                  dest.parent.mkdir(parents=True,exist_ok=True)
+                  dest.write_bytes(data)
+                  manifest[str(dest)]=hashlib.sha256(data).hexdigest()
+          Path('bootstrap-manifest.json').write_text(json.dumps(manifest),encoding='utf-8')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-revision2-input-${{ github.run_id }}
+          path: |
+            input/revision2/request.json
+            audit/common/prepare_python.ps1
+            word-payload.zip
+            upload-action/
+            bootstrap-manifest.json
+          if-no-files-found: error
+  word:
+    needs: inputs
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 45
+    steps:
+      - name: Retrieve staged inputs without codeload action startup
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Set-Location $env:GITHUB_WORKSPACE
+          $root = Join-Path $env:GITHUB_WORKSPACE "word-r2-$env:GITHUB_RUN_ID"
+          New-Item -ItemType Directory -Force $root | Out-Null
+          $headers = @{Authorization="Bearer $env:GH_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'}
+          $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/artifacts"
+          $items = Invoke-RestMethod -Uri $api -Headers $headers -TimeoutSec 60
+          $artifact = $items.artifacts | Where-Object {$_.name -eq "web-revision2-input-$env:GITHUB_RUN_ID"} | Select-Object -First 1
+          if ($null -eq $artifact) {throw 'Staged input artifact not found'}
+          $archive = Join-Path $root 'staged-input.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri $artifact.archive_download_url -Headers $headers -OutFile $archive -TimeoutSec 90
+          Expand-Archive -LiteralPath $archive -DestinationPath $root -Force
+          $manifest = Get-Content -Raw -Encoding UTF8 (Join-Path $root 'bootstrap-manifest.json') | ConvertFrom-Json
+          foreach ($entry in $manifest.PSObject.Properties) {
+            $p = Join-Path $root $entry.Name
+            if ((Get-FileHash $p -Algorithm SHA256).Hash.ToLower() -ne $entry.Value) {throw 'Pinned action file integrity mismatch'}
+          }
+          $localAction = Join-Path $env:GITHUB_WORKSPACE '_revision2_actions_upload'
+          New-Item -ItemType Directory -Force $localAction | Out-Null
+          Copy-Item -Path (Join-Path $root 'upload-action/*') -Destination $localAction -Recurse -Force
+      - name: Microsoft Word measurement or formal audit
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Location (Join-Path $env:GITHUB_WORKSPACE "word-r2-$env:GITHUB_RUN_ID")
+          New-Item -ItemType Directory -Force output | Out-Null
+          $request = Get-Content -Raw -Encoding UTF8 'input/revision2/request.json' | ConvertFrom-Json
+          if ((Get-FileHash word-payload.zip -Algorithm SHA256).Hash.ToLower() -ne $request.payload_sha256) {throw 'Word payload integrity mismatch'}
+          Move-Item -LiteralPath word-payload.zip -Destination payload.zip -Force
+          Expand-Archive -LiteralPath payload.zip -DestinationPath payload -Force
+          & 'audit/common/prepare_python.ps1'
+          & $env:AUDIT_PYTHON payload/word_job.py --request input/revision2/request.json --root payload --output output
+          if ($LASTEXITCODE -ne 0) {throw "Word job returned $LASTEXITCODE"}
+      - name: Save native Word evidence
+        uses: ./_revision2_actions_upload
+        if: always()
+        with:
+          name: word-web-revision2-${{ github.run_id }}
+          path: word-r2-${{ github.run_id }}/output/
+          if-no-files-found: warn
