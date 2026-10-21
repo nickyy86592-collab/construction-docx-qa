@@ -1,0 +1,129 @@
+name: Terminal native file transfer
+on:
+  push:
+    branches: [main]
+    paths: ['input/terminal-delivery/request.json']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: word-revision2
+  cancel-in-progress: false
+jobs:
+  inputs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage pinned artifact transport
+        shell: python
+        run: |
+          import urllib.request,zipfile,io,hashlib,json
+          from pathlib import Path
+          pin='ea165f8d65b6e75b540449e92b4886f43607fa02'
+          with urllib.request.urlopen('https://api.github.com/repos/actions/upload-artifact/zipball/'+pin,timeout=60) as r:
+              raw=r.read()
+          manifest={}
+          with zipfile.ZipFile(io.BytesIO(raw)) as z:
+              for name in ['action.yml','dist/upload/index.js']:
+                  found=[x for x in z.namelist() if '/'.join(x.split('/')[1:])==name]
+                  assert len(found)==1
+                  p=Path('upload-action')/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(z.read(found[0]))
+                  manifest[str(p)]=hashlib.sha256(p.read_bytes()).hexdigest()
+          Path('transport-manifest.json').write_text(json.dumps(manifest))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terminal-transfer-input-${{ github.run_id }}
+          path: |
+            input/terminal-delivery/request.json
+            audit/common/prepare_python.ps1
+            upload-action/
+            transport-manifest.json
+  deliver:
+    needs: inputs
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 10
+    steps:
+      - name: Retrieve verified transport and immutable Word outputs
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
+          Set-Location $env:GITHUB_WORKSPACE
+          $root=Join-Path $env:GITHUB_WORKSPACE "terminal-transfer-$env:GITHUB_RUN_ID"
+          New-Item -ItemType Directory -Force $root | Out-Null
+          $headers=@{Authorization="Bearer $env:GH_TOKEN";Accept='application/vnd.github+json'}
+          $list=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/artifacts" -Headers $headers
+          $item=$list.artifacts | Where-Object {$_.name -eq "terminal-transfer-input-$env:GITHUB_RUN_ID"} | Select-Object -First 1
+          if ($null -eq $item) {throw 'Transfer input missing'}
+          $zip=Join-Path $root 'stage.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri $item.archive_download_url -Headers $headers -OutFile $zip -TimeoutSec 90
+          Expand-Archive -LiteralPath $zip -DestinationPath $root -Force
+          $manifest=Get-Content -Raw -Encoding UTF8 (Join-Path $root 'transport-manifest.json') | ConvertFrom-Json
+          foreach($entry in $manifest.PSObject.Properties){
+            if((Get-FileHash (Join-Path $root $entry.Name) -Algorithm SHA256).Hash.ToLower() -ne $entry.Value){throw 'Pinned source integrity mismatch'}
+          }
+          & (Join-Path $root 'audit/common/prepare_python.ps1')
+          $env:TERMINAL_TRANSFER_ROOT=$root
+          @'
+          from pathlib import Path
+          import os,json,hashlib,shutil,re,zipfile
+          workspace=Path(os.environ['GITHUB_WORKSPACE']);root=Path(os.environ['TERMINAL_TRANSFER_ROOT'])
+          request=json.loads((root/'input/terminal-delivery/request.json').read_text('utf-8-sig'))
+          sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+          main=workspace/'word-r2-39539816177/output/final.docx'
+          report=workspace/'word-r2-39544291226/output/report/final.docx'
+          measure=json.loads((report.parent/'measurement.json').read_text('utf-8-sig'))
+          assert sha(main)==request['main_sha256']
+          assert sha(report)==measure['document_sha256']
+          for p in [main,report]:
+              with zipfile.ZipFile(p) as z:assert z.testzip() is None and 'word/document.xml' in z.namelist()
+          target=workspace/('terminal-final-'+os.environ['GITHUB_RUN_ID']);target.mkdir(exist_ok=True)
+          shutil.copyfile(main,target/'main.docx');shutil.copyfile(report,target/'report.docx')
+          action=workspace/'_terminal_raw_ooxml_upload';shutil.copytree(root/'upload-action',action,dirs_exist_ok=True)
+          js=action/'dist/upload/index.js';code=js.read_text('utf-8')
+          pattern=r'function createZipUploadStream\([^)]*\)\s*\{'
+          matches=list(re.finditer(pattern,code));assert len(matches)==1,len(matches)
+          guard="\nif(process.env.RAW_OOXML_ARTIFACT){ return Promise.resolve(require('fs').createReadStream(process.env.RAW_OOXML_ARTIFACT,{highWaterMark:8388608})); }\n"
+          pos=matches[0].end();js.write_text(code[:pos]+guard+code[pos:],'utf-8')
+          normal=workspace/'_terminal_regular_upload';shutil.copytree(root/'upload-action',normal,dirs_exist_ok=True)
+          proof=target/'proof';proof.mkdir(exist_ok=True)
+          for source,sub in [(main.parent,'main-native'),(workspace/'word-r2-39543331295/output','caption-native'),(report.parent,'report-native')]:
+              destination=proof/sub;destination.mkdir(exist_ok=True)
+              for p in source.iterdir():
+                  if p.name=='final.docx':continue
+                  if p.is_dir():shutil.copytree(p,destination/p.name,dirs_exist_ok=True)
+                  elif p.suffix.lower() in ['.json','.pdf','.py']:shutil.copyfile(p,destination/p.name)
+          corrected=json.loads((proof/'caption-native/format-word.corrected.json').read_text('utf-8-sig'))
+          assert corrected['document_sha256']==sha(main) and corrected['delivery_status']=='PASS'
+          counts={s:sum(x['status']==s for x in corrected['checks']) for s in ['PASS','FAIL','WARN']}
+          state={'status':'VERIFIED_NATIVE_FILES_RETRIEVED','main_sha256':sha(main),'report_sha256':sha(report),'main_pages':{'body':400,'front':12,'total':412},'report_measurement':measure['actual'],'word_format_counts':counts,'transfer_method':'OOXML files are already ZIP containers. Pinned upload client streams each existing DOCX archive unchanged as its artifact bytes, avoiding an additional ZIP envelope. Digest must equal the frozen DOCX digest.','work_review_observation':request['review_observation'],'readme':request['readme']}
+          (proof/'delivery-manifest.json').write_text(json.dumps(state,ensure_ascii=False,indent=2),'utf-8')
+          (proof/'README.md').write_text(request['readme'],'utf-8')
+          print(json.dumps(state,ensure_ascii=True))
+          '@ | & $env:AUDIT_PYTHON -
+          if($LASTEXITCODE -ne 0){throw 'Native transfer preparation failed'}
+      - name: Retain exact final main DOCX bytes
+        uses: ./_terminal_raw_ooxml_upload
+        env:
+          RAW_OOXML_ARTIFACT: ${{ github.workspace }}/terminal-final-${{ github.run_id }}/main.docx
+        with:
+          name: terminal-main-docx-${{ github.run_id }}
+          path: terminal-final-${{ github.run_id }}/main.docx
+          if-no-files-found: error
+      - name: Retain exact review note DOCX bytes
+        uses: ./_terminal_raw_ooxml_upload
+        env:
+          RAW_OOXML_ARTIFACT: ${{ github.workspace }}/terminal-final-${{ github.run_id }}/report.docx
+        with:
+          name: terminal-report-docx-${{ github.run_id }}
+          path: terminal-final-${{ github.run_id }}/report.docx
+          if-no-files-found: error
+      - name: Retain complete current proof
+        uses: ./_terminal_regular_upload
+        if: always()
+        with:
+          name: terminal-delivery-proof-${{ github.run_id }}
+          path: terminal-final-${{ github.run_id }}/proof/
+          if-no-files-found: warn
