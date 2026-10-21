@@ -1,13 +1,13 @@
 {
   "mode": "measure",
   "document": "design.docx",
-  "measurement_role": "terminal_main_20261021",
+  "measurement_role": "terminal_main_corrected_20261021",
   "update_fields": true,
   "freeze_output": true,
   "format_audit": true,
   "page_audit": true,
   "require_body_pages": 400,
-  "payload_sha256": "cd5be6e98e91825ab8f3b1d3c4f1e05d7e7e368736f576ebd5b4c29984c91de9",
-  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-b10c-81fa-9f01-1c24e40cb670/raw?se=2026-10-21T03%3A36%3A46Z&sp=r&sv=2026-02-06&sr=b&scid=01a15c71-cfa0-71a1-abd7-18780f78cd64&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-21T02%3A57%3A00Z&ske=2026-10-22T02%3A57%3A00Z&sks=b&skv=2026-02-06&sig=J99eW8OVcHZFTXdFNcJdTtj3h7HbiGwCff3KbiOYm0Q%3D",
-  "note": "Final local editorial revision from verified second revision; retain existing project fonts, geometry, body target 400 with zero tolerance. Native Word refresh and freeze, full fresh format and page checks."
+  "payload_sha256": "02cf21ab90b72f3c911f31b4f856eec79301692a874a5ece2f94438ebfc43d29",
+  "download_url": "https://sdmntprwestus.oaiusercontent.com/files/00000000-bbd0-8230-86a9-5b13cc994120/raw?se=2026-10-21T03%3A44%3A55Z&sp=r&sv=2026-02-06&sr=b&scid=01a15c71-cfa0-71a1-abd7-18780f78cd64&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-21T02%3A42%3A40Z&ske=2026-10-22T02%3A42%3A40Z&sks=b&skv=2026-02-06&sig=GEBXN16bw1kB4HqICyEgfCiD9Cf6dQpBIGDRy16HE%2BA%3D",
+  "note": "Final cross-chapter editorial correction, including quality acceptance language. Clarify figure 5-1 in two existing paragraphs, no added paragraph. Original fonts, dimensions and page breaks unchanged. Strict native Word body 400, zero tolerance."
 }
