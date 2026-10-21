@@ -101,6 +101,46 @@ jobs:
           state={'status':'VERIFIED_NATIVE_FILES_RETRIEVED','main_sha256':sha(main),'report_sha256':sha(report),'main_pages':{'body':400,'front':12,'total':412},'report_measurement':measure['actual'],'word_format_counts':counts,'transfer_method':'OOXML files are already ZIP containers. Pinned upload client streams each existing DOCX archive unchanged as its artifact bytes, avoiding an additional ZIP envelope. Digest must equal the frozen DOCX digest.','work_review_observation':request['review_observation'],'readme':request['readme']}
           (proof/'delivery-manifest.json').write_text(json.dumps(state,ensure_ascii=False,indent=2),'utf-8')
           (proof/'README.md').write_text(request['readme'],'utf-8')
+          if request.get('save_verification'):
+              import urllib.request,io
+              receipts=[]
+              for item in request['save_verification']:
+                  with urllib.request.urlopen(item['download_url'],timeout=60) as response:data=response.read()
+                  actual=hashlib.sha256(data).hexdigest()
+                  assert actual==item['sha256'],item['name']
+                  with zipfile.ZipFile(io.BytesIO(data)) as archive:assert archive.testzip() is None and 'word/document.xml' in archive.namelist()
+                  receipts.append({'name':item['name'],'drive_id':item['drive_id'],'sha256':actual,'bytes':len(data),'readback':'PASS'})
+              state['saved_file_readback']=receipts
+              (proof/'save-readback.json').write_text(json.dumps(receipts,ensure_ascii=False,indent=2),'utf-8')
+          if request.get('index_text'):
+              (target/'index.md').write_text(request['index_text'],'utf-8')
+              shutil.copyfile(target/'index.md',proof/'index-V1.14.md')
+              state['index_sha256']=sha(target/'index.md')
+          try:
+              import fitz
+          except ImportError:
+              import subprocess,sys
+              subprocess.check_call([sys.executable,'-m','pip','install','PyMuPDF==1.26.5'],stdout=subprocess.DEVNULL)
+              import fitz
+          import base64,collections,xml.etree.ElementTree as ET
+          report_pdf=report.parent/'measurement.word.pdf'
+          rendered=fitz.open(report_pdf)
+          with zipfile.ZipFile(report) as archive:rt=ET.fromstring(archive.read('word/document.xml'))
+          ns={'w':'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+          source_text=''.join(t.text or '' for t in rt.find('w:body',ns).findall('.//w:t',ns))
+          extracted=''.join(page.get_text() for page in rendered)
+          cjk=lambda s:collections.Counter(re.findall(r'[\u3400-\u9fff]',s))
+          assert cjk(source_text)==cjk(extracted),'Report PDF CJK text differs from DOCX'
+          for number,page in enumerate(rendered,1):
+              for word in page.get_text('words'):
+                  assert word[0]>=-0.5 and word[1]>=-0.5 and word[2]<=page.rect.width+0.5 and word[3]<=page.rect.height+0.5
+              image=page.get_pixmap(matrix=fitz.Matrix(1.5,1.5),alpha=False).tobytes('png')
+              encoded=base64.b64encode(image).decode('ascii')
+              chunks=[encoded[i:i+24000] for i in range(0,len(encoded),24000)]
+              print('REPORT_PREVIEW_COUNT_'+str(number)+'='+str(len(chunks)),flush=True)
+              for index,chunk in enumerate(chunks):print('REPORT_PREVIEW_'+str(number)+'_'+str(index)+'='+chunk,flush=True)
+          state['report_pdf_check']={'status':'PASS','native_pages':len(rendered),'all_CJK_characters_match':True,'outside_text_boxes':0,'pdf_sha256':sha(report_pdf)}
+          (proof/'delivery-manifest.json').write_text(json.dumps(state,ensure_ascii=False,indent=2),'utf-8')
           print(json.dumps(state,ensure_ascii=True))
           '@ | & $env:AUDIT_PYTHON -
           if($LASTEXITCODE -ne 0){throw 'Native transfer preparation failed'}
@@ -119,6 +159,14 @@ jobs:
         with:
           name: terminal-report-docx-${{ github.run_id }}
           path: terminal-final-${{ github.run_id }}/report.docx
+          if-no-files-found: error
+      - name: Retain current index bytes
+        uses: ./_terminal_raw_ooxml_upload
+        env:
+          RAW_OOXML_ARTIFACT: ${{ github.workspace }}/terminal-final-${{ github.run_id }}/index.md
+        with:
+          name: terminal-index-md-${{ github.run_id }}
+          path: terminal-final-${{ github.run_id }}/index.md
           if-no-files-found: error
       - name: Retain complete current proof
         uses: ./_terminal_regular_upload
