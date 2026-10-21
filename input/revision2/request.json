@@ -1,13 +1,7 @@
 {
-  "mode": "measure",
-  "document": "design.docx",
-  "measurement_role": "terminal_main_corrected_20261021",
-  "update_fields": true,
-  "freeze_output": true,
-  "format_audit": true,
-  "page_audit": true,
-  "require_body_pages": 400,
-  "payload_sha256": "02cf21ab90b72f3c911f31b4f856eec79301692a874a5ece2f94438ebfc43d29",
-  "download_url": "https://sdmntprwestus.oaiusercontent.com/files/00000000-bbd0-8230-86a9-5b13cc994120/raw?se=2026-10-21T03%3A44%3A55Z&sp=r&sv=2026-02-06&sr=b&scid=01a15c71-cfa0-71a1-abd7-18780f78cd64&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-21T02%3A42%3A40Z&ske=2026-10-22T02%3A42%3A40Z&sks=b&skv=2026-02-06&sig=GEBXN16bw1kB4HqICyEgfCiD9Cf6dQpBIGDRy16HE%2BA%3D",
-  "note": "Final cross-chapter editorial correction, including quality acceptance language. Clarify figure 5-1 in two existing paragraphs, no added paragraph. Original fonts, dimensions and page breaks unchanged. Strict native Word body 400, zero tolerance."
+  "mode": "caption_recheck",
+  "expected_document_sha256": "19a666fd2033630518ffb538b1cd065b1a9e7867e67ac8283bf0ec8ca16ff803",
+  "payload_sha256": "956e700a507d8dd021def1d56bd91cf6a0efd3e8d08acdf9dcce9f56f04844b7",
+  "download_url": "https://sdmntprwestus.oaiusercontent.com/files/00000000-c8b4-8230-bd39-249e6ed2205f/raw?se=2026-10-21T04%3A23%3A38Z&sp=r&sv=2026-02-06&sr=b&scid=01a15c71-cfa0-71a1-abd7-18780f78cd64&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-21T02%3A55%3A01Z&ske=2026-10-22T02%3A55%3A01Z&sks=b&skv=2026-02-06&sig=P5jwtf4toxYIG2OdbVOr7OeLuSYWAmWXoBSorXkxY5s%3D",
+  "note": "Read-only targeted native Word recheck. Reproduce exact false positive where body paragraph beginning Figure 5-1 is parsed as Figure 5; correct only supplemental-ID boundary, retain all other current exact-hash full Word checks. Do not rewrite/freeze document."
 }
