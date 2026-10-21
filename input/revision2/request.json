@@ -1,12 +1,13 @@
 {
   "mode": "measure",
   "document": "design.docx",
-  "measurement_role": "second_revision_final_audit_report_header_binding",
+  "measurement_role": "terminal_main_20261021",
   "update_fields": true,
   "freeze_output": true,
-  "format_audit": false,
-  "page_audit": false,
-  "payload_sha256": "d2fd94a673eeb36468e22e00cd9c22b821bed708b264db710e9108adfc28bd09",
-  "download_url": "https://sdmntprcentralus.oaiusercontent.com/files/00000000-d0d4-81f5-af7c-f41505561954/raw?se=2026-10-20T09%3A43%3A46Z&sp=r&sv=2026-02-06&sr=b&scid=01a15858-c90a-7ab6-b591-9d0f1175cc66&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-20T01%3A59%3A02Z&ske=2026-10-21T01%3A59%3A02Z&sks=b&skv=2026-02-06&sig=/FeEe8pLnD3LdD8OUsoZyKBgJaGx5LlkR558twC7FpU%3D",
-  "note": "Report-only table header keep-with-next correction. Main document remains frozen and complete."
+  "format_audit": true,
+  "page_audit": true,
+  "require_body_pages": 400,
+  "payload_sha256": "cd5be6e98e91825ab8f3b1d3c4f1e05d7e7e368736f576ebd5b4c29984c91de9",
+  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-b10c-81fa-9f01-1c24e40cb670/raw?se=2026-10-21T03%3A36%3A46Z&sp=r&sv=2026-02-06&sr=b&scid=01a15c71-cfa0-71a1-abd7-18780f78cd64&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-21T02%3A57%3A00Z&ske=2026-10-22T02%3A57%3A00Z&sks=b&skv=2026-02-06&sig=J99eW8OVcHZFTXdFNcJdTtj3h7HbiGwCff3KbiOYm0Q%3D",
+  "note": "Final local editorial revision from verified second revision; retain existing project fonts, geometry, body target 400 with zero tolerance. Native Word refresh and freeze, full fresh format and page checks."
 }
