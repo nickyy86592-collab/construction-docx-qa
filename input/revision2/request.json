@@ -1,7 +1,22 @@
 {
-  "mode": "caption_recheck",
-  "expected_document_sha256": "19a666fd2033630518ffb538b1cd065b1a9e7867e67ac8283bf0ec8ca16ff803",
-  "payload_sha256": "956e700a507d8dd021def1d56bd91cf6a0efd3e8d08acdf9dcce9f56f04844b7",
-  "download_url": "https://sdmntprwestus.oaiusercontent.com/files/00000000-c8b4-8230-bd39-249e6ed2205f/raw?se=2026-10-21T04%3A23%3A38Z&sp=r&sv=2026-02-06&sr=b&scid=01a15c71-cfa0-71a1-abd7-18780f78cd64&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-21T02%3A55%3A01Z&ske=2026-10-22T02%3A55%3A01Z&sks=b&skv=2026-02-06&sig=P5jwtf4toxYIG2OdbVOr7OeLuSYWAmWXoBSorXkxY5s%3D",
-  "note": "Read-only targeted native Word recheck. Reproduce exact false positive where body paragraph beginning Figure 5-1 is parsed as Figure 5; correct only supplemental-ID boundary, retain all other current exact-hash full Word checks. Do not rewrite/freeze document."
+  "mode": "bundle",
+  "requests": [
+    {
+      "mode": "fonts",
+      "output_folder": "fonts"
+    },
+    {
+      "mode": "measure",
+      "document": "report.docx",
+      "output_folder": "report",
+      "measurement_role": "terminal_final_review_note",
+      "update_fields": true,
+      "freeze_output": true,
+      "format_audit": false,
+      "page_audit": false
+    }
+  ],
+  "payload_sha256": "169bfeece34fd3551bc4194671a977486b5faa2be4a4a5945934784beae2ac1c",
+  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-22c4-81fa-8362-611f1277e441/raw?se=2026-10-21T04%3A34%3A11Z&sp=r&sv=2026-02-06&sr=b&scid=01a15c71-cfa0-71a1-abd7-18780f78cd64&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-21T02%3A47%3A19Z&ske=2026-10-22T02%3A47%3A19Z&sks=b&skv=2026-02-06&sig=lXk98nrLd/Lm/VfKK%2BRxotllCwRXRdy8acE3G8H0lSc%3D",
+  "note": "Report-only native Word pagination and existing runner fonts for internal Chinese visual QA. Main final construction document remains unchanged and already verified."
 }
