@@ -99,15 +99,15 @@ def word_suite(base):
    import zipfile
    paragraphs=[]
    def para(text,level=None):
-    props='<w:pPr><w:outlineLvl w:val="'+str(level-1)+'"/></w:pPr>' if level else ''
-    paragraphs.append('<w:p>'+props+'<w:r><w:t xml:space="preserve">'+escape(text)+'</w:t></w:r></w:p>')
+    props='<w:pPr><w:outlineLvl w:val="'+str(level-1)+'"/></w:pPr>' if level else '<w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9638"/></w:tabs></w:pPr>'
+    paragraphs.append('<w:p>'+props+'<w:r><w:t xml:space="preserve">'+escape(text).replace('\t','</w:t><w:tab/><w:t xml:space="preserve">')+'</w:t></w:r></w:p>')
    def newpage():paragraphs.append('<w:p><w:r><w:br w:type="page"/></w:r></w:p>')
    if front:
     para('项目名称：格式适配合成测试')
     if kind=='multi':newpage()
-    para('第一章 施工部署 '+str(front+1))
+    para('第一章 施工部署\t'+str(front+1))
     if kind=='multi':
-     para('第一节 施工准备 4');newpage();para('一、工序检查 4')
+     para('第一节 施工准备\t4');newpage();para('一、工序检查\t4')
     newpage()
    para('第一章 施工部署',1);para('第一节 施工准备',2);para('一、工序检查',3)
    para('完成材料报审及工作面核验后组织作业，检查合格后移交。'*5)
@@ -121,16 +121,134 @@ def word_suite(base):
     doc.Repaginate();records=c.get_paragraph_records(doc);headings,hchecks=c.extract_heading_structure(records,front+1,rules)
     checks=c.check_front_page_and_body(doc,records,headings,rules,int(doc.ComputeStatistics(2)))+hchecks
     check('Word actual layout '+kind,not [x for x in checks if x.status=='FAIL'])
+    toc_checks=c.check_toc_layout_word(doc,records,headings,rules)
+    check('Word actual TOC alignment '+kind,not [x for x in toc_checks if x.status in ('FAIL','WARN')])
     doc.ExportAsFixedFormat(str((page/'fixture.word.pdf').resolve()),17)
    finally:doc.Close(False)
  finally:word.Quit()
+
+
+def toc_portable_cases(base):
+ from docx import Document
+ from docx.enum.text import WD_TAB_ALIGNMENT,WD_TAB_LEADER
+ from docx.enum.style import WD_STYLE_TYPE
+ from docx.shared import Pt
+ from docx.oxml import OxmlElement
+ from docx.oxml.ns import qn
+ import zipfile
+ work=base/'toc';work.mkdir()
+ rules={'front_matter':{'toc_levels':[1,2,3]}}
+ def make(name,mode='valid',entries=None):
+  entries=entries or [(1,'第一章 施工部署','2')]
+  d=Document();d.add_paragraph('测试项目施工组织设计');d.add_paragraph('目录')
+  if mode=='gutter':d.sections[0].gutter=Pt(10)
+  width=(d.sections[0].page_width-d.sections[0].left_margin-d.sections[0].right_margin)/12700
+  parent=d.styles.add_style('TOC-base-test',WD_STYLE_TYPE.PARAGRAPH)
+  parent.paragraph_format.tab_stops.add_tab_stop(Pt(width),WD_TAB_ALIGNMENT.RIGHT,WD_TAB_LEADER.DOTS)
+  child=d.styles.add_style('TOC-child-test',WD_STYLE_TYPE.PARAGRAPH);child.base_style=parent
+  for i,(level,title,page) in enumerate(entries):
+   if mode=='manual_dots':text=title+'.'*20+page
+   elif mode=='spaces':text=title+'     '+page
+   else:text=title+'\t'+page
+   p=d.add_paragraph(text,style=child if mode in ('inherit','clear','multi_tabs') else None)
+   p.paragraph_format.left_indent=Pt((level-1)*12)
+   if mode=='manual_plus_tab':p.text=title+'.'*20+'\t'+page
+   if mode not in ('manual_dots','spaces','no_stop','inherit','clear','multi_tabs'):
+    p.paragraph_format.tab_stops.add_tab_stop(Pt(width-12 if mode=='wrong_position' else width),WD_TAB_ALIGNMENT.LEFT if mode=='left' else WD_TAB_ALIGNMENT.RIGHT,WD_TAB_LEADER.SPACES if mode=='no_leader' else WD_TAB_LEADER.DOTS)
+   if mode=='multi_tabs':p.paragraph_format.tab_stops.add_tab_stop(Pt(18),WD_TAB_ALIGNMENT.LEFT)
+   if mode=='clear':
+    tabs=OxmlElement('w:tabs');t=OxmlElement('w:tab');t.set(qn('w:val'),'clear');t.set(qn('w:pos'),str(int(round(width*20))));tabs.append(t);p._p.get_or_add_pPr().append(tabs)
+   if mode=='across_pages' and i==0:d.add_page_break()
+  for level,title,page in entries:d.add_heading(title,level=level);d.add_paragraph('实际工序检查与材料报审要求。')
+  path=work/(name+'.docx');d.save(path);return path
+ def checkdoc(name,path,expected,rr=rules):
+  results=c.check_toc_layout_static(path,rr)
+  status='FAIL' if any(x.status=='FAIL' for x in results) else 'WARN' if any(x.status=='WARN' for x in results) else 'PASS'
+  check('TOC '+name,status==expected)
+ for mode in ('valid','inherit'):
+  checkdoc(mode,make(mode,mode),'PASS')
+ for mode in ('manual_dots','spaces','manual_plus_tab','no_stop','left','no_leader','wrong_position','clear'):
+  checkdoc(mode,make(mode,mode),'FAIL')
+ entries=[(1,'第一章 施工部署','2'),(2,'第一节 施工准备','12'),(3,'一、检查与验收','123')]
+ checkdoc('three levels and 1/2/3-digit pages',make('three_levels',entries=entries),'PASS')
+ checkdoc('multi-page entries',make('multi_page','across_pages',entries),'PASS')
+ long=[(1,'第一章 '+('针对复杂条件的施工工序、资源接口与质量检验控制要求'*8),'123')]
+ checkdoc('long title retains real tab',make('long',entries=long),'PASS')
+ checkdoc('gutter requires actual layout',make('gutter','gutter'),'WARN')
+ checkdoc('extra stops need Word disposition',make('extra','multi_tabs'),'WARN')
+ no_body=Document();no_body.add_paragraph('目录');no_body.add_paragraph('第一章 施工部署 2');path=work/'unlocatable.docx';no_body.save(path)
+ checkdoc('unlocatable boundary cannot pass',path,'WARN')
+ checkdoc('no TOC exception',path,'PASS',{'front_matter':{'toc_levels':[]}})
+ exception={'front_matter':{'toc_levels':[1],'toc_layout':{'leader':'none','source_ref':'有效补遗第2条：目录不使用引导符'}}}
+ checkdoc('tender leader exception honored',make('no_leader_exception','no_leader'),'PASS',exception)
+ for cfg in ({'leader':'none'},{'show_page_numbers':False},{'right_align':False},{'right_inset_pt':12}):
+  try:c.toc_layout({'front_matter':{'toc_layout':cfg}});ok=False
+  except c.AuditError:ok=True
+  check('TOC override requires source '+str(cfg),ok)
+ for cfg in ({'leader':'unknown'},{'right_inset_pt':float('nan')},{'right_inset_pt':True},{'right_align':'yes'}):
+  try:c.toc_layout({'front_matter':{'toc_layout':cfg}});ok=False
+  except c.AuditError:ok=True
+  check('TOC invalid rule blocked '+str(cfg),ok)
+ # Native TOC cached results remain detectable through hyperlinks and field code runs.
+ auto=make('auto_cache');parts={}
+ with zipfile.ZipFile(auto) as z:parts={name:z.read(name) for name in z.namelist()}
+ import xml.etree.ElementTree as ET
+ W='{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+ root=ET.fromstring(parts['word/document.xml']);body=root.find(W+'body');p=next(p for p in body.findall(W+'p') if any(t.text=='第一章 施工部署' for t in p.iter(W+'t')))
+ start=ET.Element(W+'r');begin=ET.SubElement(start,W+'fldChar');begin.set(W+'fldCharType','begin');p.insert(1,start)
+ instr=ET.Element(W+'r');ET.SubElement(instr,W+'instrText').text=' TOC \\o "1-3" \\h ';p.insert(2,instr)
+ sep=ET.Element(W+'r');ET.SubElement(sep,W+'fldChar').set(W+'fldCharType','separate');p.insert(3,sep)
+ end=ET.SubElement(p,W+'r');ET.SubElement(end,W+'fldChar').set(W+'fldCharType','end')
+ parts['word/document.xml']=ET.tostring(root)
+ with zipfile.ZipFile(auto,'w',zipfile.ZIP_DEFLATED) as z:
+  for name,data in parts.items():z.writestr(name,data)
+ checkdoc('native TOC field cache with runs',auto,'PASS')
+ # Missing section dimensions must be reviewed rather than guessed.
+ root=ET.fromstring(parts['word/document.xml']);sec=root.find('.//'+W+'sectPr');sec.remove(sec.find(W+'pgSz'));parts['word/document.xml']=ET.tostring(root)
+ unknown=work/'unknown_width.docx'
+ with zipfile.ZipFile(unknown,'w',zipfile.ZIP_DEFLATED) as z:
+  for name,data in parts.items():z.writestr(name,data)
+ checkdoc('unknown width WARN',unknown,'WARN')
+
+ # Simulate Word interface responses to test failure handling; NOT actual Word layout.
+ from types import SimpleNamespace as NS
+ def word_case(x=550,number_y=100,title_y=100,actual=2,alignment=2,leader=1,position=500,gutter=0):
+  class Range:
+   def __init__(self,start=0,end=20,role='toc'):
+    self.Start=start;self.End=end;self.role=role
+    self.Sections=lambda n:NS(PageSetup=NS(PageWidth=600,LeftMargin=50,RightMargin=50,Gutter=gutter,TextColumns=NS(Count=1)))
+   @property
+   def Text(self):return '第一章 施工部署\t2\r'
+   @property
+   def Duplicate(self):return Range(self.Start,self.End)
+   @property
+   def Find(self):return NS(Execute=self.find)
+   def find(self,FindText,**kw):
+    self.Start,self.End=(12,13) if FindText=='2' else (7,8);self.role='number' if FindText=='2' else 'title';return True
+   def Information(self,n):
+    return {1:actual,3:1,5:x,6:number_y if self.role=='number' else title_y}.get(n,0)
+  class Tabs:
+   Count=1
+   def __call__(self,n):return NS(Position=position,Alignment=alignment,Leader=leader)
+  p=NS(Range=Range(),Format=NS(TabStops=Tabs(),LineSpacing=18))
+  doc=NS(Paragraphs=lambda n:p,Range=lambda start,end:Range(start,end,'caret' if start==end else 'title'))
+  rec={'index':1,'page':1,'text':'第一章 施工部署 2'};head={'index':2,'page':2,'text':'第一章 施工部署','level':1}
+  return c.check_toc_layout_word(doc,[rec],[head],{'body_start_page':2,'front_matter':{'toc_levels':[1]}})
+ def result(rows):return 'FAIL' if any(r.status=='FAIL' for r in rows) else 'WARN' if any(r.status=='WARN' for r in rows) else 'PASS'
+ check('TOC Word-interface valid response',result(word_case())=='PASS')
+ for name,kw in [('wrong actual right edge',{'x':530}),('outside page',{'x':620}),('page number orphan line',{'number_y':125}),('stale displayed page',{'actual':3}),('left stop',{'alignment':0}),('wrong leader',{'leader':0}),('wrong stop position',{'position':480})]:
+  check('TOC Word-interface '+name+' rejected',result(word_case(**kw))=='FAIL')
+ check('TOC Word-interface gutter needs review',result(word_case(gutter=10))=='WARN')
+ check('TOC Word-interface unavailable coordinate WARN',result(word_case(x=-1))=='WARN')
 
 if __name__=='__main__':
  p=argparse.ArgumentParser();p.add_argument('--word',action='store_true');p.add_argument('--report',type=Path);a=p.parse_args()
  with tempfile.TemporaryDirectory() as tmp:
   base=Path(tmp)
   if a.word:word_suite(base)
-  else:portable(base)
- report={'version':'2026-10-22','passed':len(RESULTS),'windows_word_executed':a.word,'tests':RESULTS}
+  else:
+   portable(base)
+   toc_portable_cases(base)
+ report={'version':'2026-10-22-r2','passed':len(RESULTS),'windows_word_executed':a.word,'tests':RESULTS}
  print(json.dumps(report,ensure_ascii=False,indent=2))
  if a.report:a.report.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')

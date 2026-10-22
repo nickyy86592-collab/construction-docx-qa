@@ -24,7 +24,10 @@ TOLERANCE=f.discover_page_script()[1]['PAGE_TOLERANCE']
 FRONT=f.discover_page_script()[1]['FRONT_MATTER_PAGES']
 rules={'required_figures':[{'name':n,'keywords':[n],'hard':True,'color_required':True} for n in names],'required_real_photo_slots':[{'name':'现场沟塘'}],'photo_delivery_stage':'draft','font_rules':{},'required_level1_titles':[]}
 def make_doc(path, gray=False,photo=True,editorial=False,same=False,border=True,frame_text=True):
- d=Document();d.add_paragraph('第一章 施工部署');d.add_paragraph('路面强度按4.5MPa进行材料报审。')
+ d=Document();d.add_paragraph('测试项目施工组织设计');toc=d.add_paragraph('第一章 施工部署\t2')
+ from docx.enum.text import WD_TAB_ALIGNMENT,WD_TAB_LEADER
+ toc.paragraph_format.tab_stops.add_tab_stop(Inches(6),WD_TAB_ALIGNMENT.RIGHT,WD_TAB_LEADER.DOTS)
+ d.add_heading('第一章 施工部署',level=1);d.add_paragraph('路面强度按4.5MPa进行材料报审。')
  for i,n in enumerate(names):
   im=Image.new('RGB',(600,900),'white');dr=ImageDraw.Draw(im)
   for j,col in enumerate(['#228bcc','#d94235','#38a76c']):dr.rectangle((70,70+j*200,530,220+j*200), fill='gray' if gray else col)
