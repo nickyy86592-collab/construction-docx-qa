@@ -24,3 +24,44 @@ jobs:
         run: python audit/common/tests/test_generic_audit.py
       - name: Test long-document content planning, sample and module gates
         run: python audit/common/tests/test_long_document.py
+
+      - name: Test adaptive front matter, editorial language, and module scoring review
+        run: python audit/common/tests/test_upgrade.py --report upgrade-portable.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-word-test-input-${{ github.run_id }}
+          path: audit/common/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-portable-${{ github.run_id }}
+          path: upgrade-portable.json
+          if-no-files-found: error
+  native-format-regression:
+    needs: portable-regression
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: upgrade-${{ github.run_id }}
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: upgrade-word-test-input-${{ github.run_id }}
+          path: upgrade-${{ github.run_id }}/audit/common
+      - name: Prepare cached Python and Word COM
+        shell: powershell
+        run: audit/common/prepare_python.ps1
+      - name: Verify adaptive front matter in actual Microsoft Word
+        shell: powershell
+        run: |
+          & $env:AUDIT_PYTHON audit/common/tests/test_upgrade.py --word --report upgrade-word.json
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upgrade-native-word-${{ github.run_id }}
+          path: upgrade-${{ github.run_id }}/upgrade-word.json
+          if-no-files-found: warn

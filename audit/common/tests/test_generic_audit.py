@@ -78,6 +78,17 @@ sc=OUT/'synthetic-score.json';sc.write_text(json.dumps({'status':'PASS','phase':
 wr=OUT/'warnings.json';wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':[]}))
 a=Namespace(document=passdoc,state=statepath,mode='local-review',review=rp,static_report=staticpath,word_report=wp,page_report=pg,score_report=sc,warning_review=wr)
 expect('交付汇总schema正例允许编制稿',f.cmd_delivery(a)==0)
+# Rechecked language WARN must be closed even when a former report omitted that check.
+saved_doc=passdoc.read_bytes();saved_reports={p:p.read_bytes() for p in (rp,staticpath,wp,pg,sc,wr)}
+d=Document(passdoc);d.add_paragraph('疑似符号需结合原图核对。');d.save(passdoc)
+for path in saved_reports:
+ data=json.loads(path.read_text());data['document_sha256']=f.sha256(passdoc);path.write_text(json.dumps(data))
+expect('新增语境WARN不能借旧静态报告绕过处置',f.cmd_delivery(a)==2)
+wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':[{'report':'static','check':'正文异常用语_语境复核','status':'reviewed','evidence':'Synthetic exercise: wording belongs to internal review and must be fixed before production','conclusion':'fixture only; no actual delivery'}]}))
+expect('语境WARN沿用已有处置机制',f.cmd_delivery(a)==0)
+passdoc.write_bytes(saved_doc)
+for path,raw in saved_reports.items():path.write_bytes(raw)
+
 wp.write_text(json.dumps(word|{'document_sha256':'old version'}));expect('交付汇总拒绝旧版本Word报告',f.cmd_delivery(a)==2);wp.write_text(json.dumps(word))
 wp.write_text(json.dumps(word|{'rules_sha256':'altered'}));expect('交付汇总拒绝不同格式规则指纹',f.cmd_delivery(a)==2);wp.write_text(json.dumps(word))
 wp.write_text(json.dumps(word|{'checks':[{'name':'留白人工复核','status':'WARN'}]}));expect('未关闭留白WARN不允许交付',f.cmd_delivery(a)==2)
@@ -122,3 +133,4 @@ expect('Non-Windows cannot fake actual Word stage measurement',rc.returncode==3)
 manifest=json.loads((COMMON/'skill_version.json').read_text())
 expect('Generic scripts match exact synced skill bytes',all(hashlib.sha256((COMMON/n).read_bytes()).hexdigest()==h for n,h in manifest['common_files_sha256'].items()))
 print(json.dumps({'total_passed':len(results),'scope':'portable and interface tests; no Windows Word execution'},ensure_ascii=False))
+

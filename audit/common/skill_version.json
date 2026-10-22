@@ -1,9 +1,9 @@
 {
   "source_skill": "general-construction-organization-writing",
-  "version": "2026-10-13-long-document-planning",
+  "version": "2026-10-22",
   "common_files_sha256": {
     "评分响应核验.py": "b0fd9fb44d2d89c9b9eb20412edcf24c10de894a1678037dd5e977ace863fbfa",
-    "编制流程门禁.py": "4f10a85e941458257ff357032c45dbe8b5c0f138c3e02ca5207bcd98c00f6660",
-    "Word正式交付硬审（不含页数）.py": "653752ac17278da05ca32e3e2e351c9a52d73dd30eb63f7c76f4a18f9746f20f"
+    "编制流程门禁.py": "5ebcdabe5994b799c29c70e494244df96d34d4fbdc14242516b017f12f83f2f4",
+    "Word正式交付硬审（不含页数）.py": "53031ca06ebee9d6b4694196391337c722df56806adc2941a3ab4c065fb9e219"
   }
 }

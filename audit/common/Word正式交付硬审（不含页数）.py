@@ -69,6 +69,8 @@ WD_ORIENT_LANDSCAPE = 1
 DEFAULT_RULES: Dict[str, Any] = {
     # 页数目标已剥离到独立页数硬审脚本；本脚本仅保留页面定位所需的 front/body 参数。
     "front_page": 1,
+    "front_matter": {"cover_required": True, "toc_levels": [1]},
+    "heading_patterns": None,  # 招标另定标题体系时，由AI提取1/2/3级正则；不改变大纲级别
     "body_start_page": 2,
     "allow_front_matter_break": True,
     "hard_fail_on_mechanical_structure": True,
@@ -135,6 +137,7 @@ def normalize_toc_title(text: str) -> str:
 
 def load_rules(path: Optional[Path], page_dir=None) -> Dict[str, Any]:
     rules = json.loads(json.dumps(DEFAULT_RULES, ensure_ascii=False))
+    incoming = {}
     if path:
         with path.open("r", encoding="utf-8") as f:
             incoming = json.load(f)
@@ -166,6 +169,39 @@ def load_rules(path: Optional[Path], page_dir=None) -> Dict[str, Any]:
         rules['front_page']=1
     elif page_dir is not None:
         raise AuditError('指定目录未找到项目页数脚本')
+    front = rules['body_start_page'] - 1
+    if type(rules['body_start_page']) is not int or front < 0:
+        raise AuditError('正文起始页必须为正整数')
+    fm = rules.get('front_matter')
+    if not isinstance(fm, dict):
+        raise AuditError('front_matter必须为对象')
+    fm = {"cover_required": True, "toc_levels": [1], **fm}
+    if type(fm['cover_required']) is not bool:
+        raise AuditError('cover_required必须为布尔值')
+    levels = fm['toc_levels']
+    if not isinstance(levels, list) or any(type(v) is not int or v not in (1,2,3) for v in levels) or levels != sorted(set(levels)):
+        raise AuditError('toc_levels须为递增且不重复的1至3级目录列表；[]表示有依据地无目录')
+    if front == 0 and (fm['cover_required'] or levels):
+        raise AuditError('无前置页时须按招标依据关闭封面及目录要求')
+    for key in ('cover_page_range', 'toc_page_range'):
+        span = fm.get(key, [1, front] if front else [])
+        if span and not (isinstance(span,list) and len(span)==2 and all(type(v) is int for v in span) and 1<=span[0]<=span[1]<=front):
+            raise AuditError(key+'须落在项目脚本提供的前置页范围')
+        fm[key] = span
+    keywords = fm.get('cover_keywords', [])
+    if not isinstance(keywords,list) or any(not isinstance(v,str) or not v.strip() for v in keywords):
+        raise AuditError('cover_keywords须为非空字符串数组')
+    rules['front_matter'] = fm
+    patterns = rules.get('heading_patterns')
+    if patterns is not None:
+        if not isinstance(patterns,dict) or set(patterns)!= {'1','2','3'}:
+            raise AuditError('heading_patterns须明确1/2/3三级模式')
+        for pattern in patterns.values():
+            try:
+                if re.compile(pattern).groups < 1:
+                    raise AuditError('标题模式第一捕获组须为可解析编号')
+            except (re.error, TypeError) as exc:
+                raise AuditError('标题模式无效：'+str(exc)) from exc
     return rules
 
 
@@ -263,15 +299,17 @@ def get_paragraph_records(doc) -> List[Dict[str, Any]]:
     return records
 
 
-def classify_heading(text: str) -> Tuple[int, Optional[int]]:
-    for level, regex in ((1, RE_L1), (2, RE_L2), (3, RE_L3)):
+def classify_heading(text: str, rules=None) -> Tuple[int, Optional[int]]:
+    patterns = (rules or {}).get('heading_patterns')
+    regexes = [(n, re.compile(patterns[str(n)])) for n in (1,2,3)] if patterns else ((1, RE_L1), (2, RE_L2), (3, RE_L3))
+    for level, regex in regexes:
         m = regex.match(text)
         if m:
             return level, chinese_num_to_int(m.group(1))
     return 0, None
 
 
-def extract_heading_structure(records: List[Dict[str, Any]], body_start_page: int) -> Tuple[List[Dict[str, Any]], List[CheckResult]]:
+def extract_heading_structure(records: List[Dict[str, Any]], body_start_page: int, rules=None) -> Tuple[List[Dict[str, Any]], List[CheckResult]]:
     results: List[CheckResult] = []
     headings: List[Dict[str, Any]] = []
     bad_outline: List[Dict[str, Any]] = []
@@ -280,7 +318,7 @@ def extract_heading_structure(records: List[Dict[str, Any]], body_start_page: in
     for rec in records:
         if rec["page"] < body_start_page:
             continue
-        textual_level, number = classify_heading(rec["text"])
+        textual_level, number = classify_heading(rec["text"], rules)
         outline_level = rec["outline"] if rec["outline"] in (1, 2, 3) else 0
 
         if textual_level:
@@ -339,96 +377,49 @@ def check_front_page_and_body(doc, records: List[Dict[str, Any]], headings: List
             "has_follow_content_on_start_page": has_follow_content,
         }))
 
-    # 首页目录项不得使用 Heading 1–3，否则会污染导航窗格并被误判为正文标题。
-    front_outline = [
-        {"text": r["text"], "outline": r["outline"]}
-        for r in records if r["page"] == front and r["outline"] in (1, 2, 3)
-    ]
-    if front_outline:
-        out.append(CheckResult(
-            "首页内容_目录不得进入导航窗格", "FAIL",
-            "首页封面/一级目录存在 Heading 1–3 大纲级别；首页目录应为普通目录文本，正文标题才进入导航窗格。",
-            front_outline,
-        ))
-    else:
-        out.append(CheckResult("首页内容_目录不得进入导航窗格", "PASS", "首页未发现 Heading 1–3 大纲标题。"))
-
-    if body_start<=front:
-        out.append(CheckResult("前置封面目录", "SKIP", "当前项目页数脚本配置无前置扣除页；需按项目要求复核。"))
+    fm = rules.get('front_matter') or {"cover_required": True, "toc_levels": [1]}
+    prefix = [r for r in records if 1 <= r['page'] < body_start]
+    polluted = [r for r in prefix if r['outline'] in (1,2,3)]
+    out.append(CheckResult('前置页_导航隔离', 'FAIL' if polluted else 'PASS',
+        '封面及目录不得使用正文标题大纲级别。', polluted or None))
+    if body_start == 1:
+        out.append(CheckResult('前置封面目录', 'PASS', '按当前项目规则，无独立前置页。'))
         return out
-    front_text = "\n".join(clean_text(get_page_range(doc, n, page_count).Text) for n in range(front,body_start))
-    front_lines = [normalize_spaces(x) for x in re.split(r"[\r\n]+", front_text) if normalize_spaces(x)]
-
-    # 首页不得出现二级、三级标题格式内容。
-    bad_lower = [x for x in front_lines if RE_L2.match(x) or RE_L3.match(x)]
-    if bad_lower:
-        out.append(CheckResult("首页内容_仅封面及一级目录", "FAIL", "首页出现二级或三级标题格式内容；首页仅允许封面信息及一级目录。", bad_lower))
-    else:
-        out.append(CheckResult("首页内容_仅封面及一级目录", "PASS", "首页未发现二级/三级标题格式内容。"))
-
-    # 首页一级目录与正文一级标题名称、数量、顺序必须完全一致。
-    toc_candidates: List[Tuple[int, str]] = []
-    for idx, line in enumerate(front_lines):
-        n = normalize_toc_title(line)
-        if RE_L1.match(n):
-            if not toc_candidates or toc_candidates[-1][1] != n:
-                toc_candidates.append((idx, n))
-    page1_toc = [x[1] for x in toc_candidates]
-    body_l1 = [normalize_toc_title(h["text"]) for h in l1]
-
-    # 首页必须同时存在有效封面信息，不能只有一级目录。
-    # “有效封面信息”按可程序化边界定义为：首个一级目录项之前至少存在一行
-    # 非空、非纯页码/装饰符号、且不是一级目录格式的文字。
-    cover_lines: List[str] = []
-    if toc_candidates:
-        first_toc_idx = toc_candidates[0][0]
-        for line in front_lines[:first_toc_idx]:
-            n = normalize_toc_title(line)
-            if not n:
-                continue
-            if RE_L1.match(n):
-                continue
-            if re.fullmatch(r"[\d\s\.·…．。_—-]+", n):
-                continue
-            cover_lines.append(line)
-    if cover_lines:
-        out.append(CheckResult(
-            "首页封面信息", "PASS",
-            "首页一级目录之前检测到有效封面信息。",
-            cover_lines[:20],
-        ))
-    else:
-        out.append(CheckResult(
-            "首页封面信息", "FAIL",
-            "首页未检测到有效封面信息，或一级目录从首页首项直接开始；前置扣除页范围内须包含封面及一级目录。",
-        ))
-
-    if page1_toc == body_l1 and body_l1:
-        out.append(CheckResult("首页一级目录_与正文一致", "PASS", "首页一级目录名称、数量及顺序与正文一级标题完全一致。", body_l1))
-    else:
-        out.append(CheckResult("首页一级目录_与正文一致", "FAIL", "首页一级目录与正文一级标题存在缺项、错序、数量或名称不一致。", {
-            "page1_toc": page1_toc,
-            "body_level1": body_l1,
-        }))
-
-    # 可程序化的首页边界检查：一级目录开始后，不得再混入普通正文。
-    # 目录之前的普通文字视作封面信息；其语义无法仅凭 DOCX 可靠区分，因此不做猜测性误杀。
-    suspicious_after_toc: List[str] = []
-    if toc_candidates:
-        first_toc_idx = toc_candidates[0][0]
-        toc_line_indexes = {x[0] for x in toc_candidates}
-        for idx in range(first_toc_idx, len(front_lines)):
-            if idx in toc_line_indexes:
-                continue
-            line = front_lines[idx]
-            if re.fullmatch(r"[\d\s\.·…．。-]+", line):
-                continue
-            suspicious_after_toc.append(line)
-    if suspicious_after_toc:
-        out.append(CheckResult("首页目录后正文混入", "FAIL", "首页一级目录开始后出现非一级目录的普通正文/其他内容。", suspicious_after_toc))
-    else:
-        out.append(CheckResult("首页目录后正文混入", "PASS", "首页一级目录区域未发现普通正文混入。"))
-
+    def in_span(rec, key):
+        span = fm.get(key) or [1,body_start-1]
+        return span[0] <= rec['page'] <= span[1]
+    toc_records = [r for r in prefix if in_span(r,'toc_page_range')]
+    levels = fm.get('toc_levels',[1])
+    actual, extra, trailing = [], [], []
+    started = False
+    for rec in toc_records:
+        text = normalize_toc_title(rec['text'])
+        level, _ = classify_heading(text, rules)
+        if level:
+            started = True
+            if level in levels:
+                actual.append((level,text))
+            else:
+                extra.append(rec['text'])
+        elif started and levels and not re.fullmatch(r'[\d\s.·…．。—-]+',text) and text not in ('目录','目 录'):
+            trailing.append(rec['text'])
+    expected = [(h['level'],normalize_toc_title(h['text'])) for h in headings if h['level'] in levels]
+    out.append(CheckResult('前置目录_与正文导航一致', 'PASS' if actual==expected and not extra else 'FAIL',
+        '按项目目录层级比对正文标题名称、数量、顺序及Word导航。',
+        {'toc':actual,'body':expected,'unexpected_levels':extra}))
+    out.append(CheckResult('前置目录_正文混入', 'FAIL' if trailing else 'PASS',
+        '目录项开始后不得混入普通正文。', trailing or None))
+    if fm.get('cover_required',True):
+        first_toc_start = min((r['start'] for r in toc_records if classify_heading(normalize_toc_title(r['text']),rules)[0]),default=float('inf'))
+        cover = [r['text'] for r in prefix if in_span(r,'cover_page_range') and r['start'] < first_toc_start
+                 and not classify_heading(normalize_toc_title(r['text']),rules)[0]
+                 and re.sub(r'\s+','',r['text']) not in ('目录',)
+                 and not re.fullmatch(r'[\d\s.·…．。_—-]+',r['text'])]
+        keywords = fm.get('cover_keywords',[])
+        missing = [k for k in keywords if not any(k in t for t in cover)]
+        out.append(CheckResult('前置封面信息','PASS' if cover and not missing else 'FAIL',
+            '按项目封面范围检查有效文字及明确要求的封面字段；具体语义由AI复核。',
+            {'cover_lines':cover[:20],'missing_keywords':missing}))
     return out
 
 def check_project_parameter_completeness(rules: Dict[str, Any]) -> CheckResult:
@@ -589,7 +580,7 @@ def check_pagination_controls(doc, records: List[Dict[str, Any]], headings: List
     # 标题段前分页：硬失败。
     bad_heading_pb = [
         {"text": h["text"], "page": h["page"]}
-        for h in headings if h.get("page_break_before")
+        for h in headings if h.get("page_break_before") and not (rules.get("allow_front_matter_break") and headings and h is headings[0] and body_start_page > 1 and h["page"] == body_start_page)
     ]
     out.append(CheckResult(
         "标题强制分页_PageBreakBefore",
@@ -627,7 +618,7 @@ def check_pagination_controls(doc, records: List[Dict[str, Any]], headings: List
             continue
         prev = doc.Sections(idx - 1)
         layout_changed = _section_layout_signature(prev) != _section_layout_signature(sec)
-        heading_level, _ = classify_heading(first["text"])
+        heading_level, _ = classify_heading(first["text"], rules)
         detail = {
             "section": idx,
             "page": first["page"],
@@ -635,6 +626,9 @@ def check_pagination_controls(doc, records: List[Dict[str, Any]], headings: List
             "section_start": start_type,
             "layout_changed": layout_changed,
         }
+        if (rules.get('allow_front_matter_break') and headings and body_start_page > 1
+                and first['start'] == headings[0]['start'] and first['page'] == body_start_page):
+            continue  # 仅允许必要的前置页/正文边界；正文内部仍连续排版
         if heading_level in (1, 2, 3) and not layout_changed:
             heading_forced.append(detail)
         else:
@@ -1387,7 +1381,7 @@ def check_fonts(doc, records: List[Dict[str, Any]], rules: Dict[str, Any]) -> Ch
     for rec in records:
         if rec["page"] < int(rules["body_start_page"]):
             continue
-        level, _ = classify_heading(rec["text"])
+        level, _ = classify_heading(rec["text"], rules)
         key = f"heading{level}" if level else "body"
         expected = fr.get(key)
         if not expected:
@@ -1461,7 +1455,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         records = get_paragraph_records(doc)
         results.append(check_project_parameter_completeness(rules))
         results.extend(portable_checks(docx_path, rules))
-        headings, heading_checks = extract_heading_structure(records, int(rules["body_start_page"]))
+        headings, heading_checks = extract_heading_structure(records, int(rules["body_start_page"]), rules)
         results.extend(heading_checks)
         results.extend(check_front_page_and_body(doc, records, headings, rules, page_count))
         results.append(check_heading_level_presence(headings))
@@ -1484,7 +1478,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         overall = "PASS" if not hard_failures else "FAIL"
 
         report = {
-            "audit_version": "1.6.0",
+            "audit_version": "1.7.0",
             "rules_sha256": rules_digest(rules),
             "photo_delivery_stage": rules.get("photo_delivery_stage"),
             "layout_engine": "Microsoft Word",
@@ -1525,7 +1519,47 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
 
 # Portable checks inspect the embedded DOCX bytes, not an external image filename.
 FIGURE_NAMES = ('施工功能分区示意图', '施工进度横道图', '施工进度网络图')
-EDITORIAL_RE = re.compile(r'本[章节段](?:应|需|可)(?:写|补充|描述|引用)|(?:后续|此处|这里)(?:补写|扩写|插入正文)|得分点|(?:引用|调用|根据)知识库|Skill|SKILL|(?:编制|审核|硬审|页数|门禁)脚本|待完善正文|编制时应|本段可用')
+EDITORIAL_RE = re.compile(r'本[章节段](?:应|需|可)(?:写|补充|描述|引用)|(?:后续|此处|这里)(?:补写|扩写|插入正文)|(?:引用|调用|根据)知识库|(?:编制|审核|硬审|页数|门禁)脚本|待完善正文|编制时应|本段可用|本[章节段](?:需|尚需|有待)(?:进一步)?完善|建议补充相关措施|(?:审查|审核|编制)(?:意见|状态)[:：]|(?:本稿|本章|本节|本段)(?:已|尚未|未)(?:通过|完成)(?:审核|审查|复核)|(?:本稿|本章|本节|本段)(?:质量优秀|已达优秀)|待办[:：]|(?:差异|冲突)(?:尚未|未)闭合')
+EDITORIAL_WARN_RE = re.compile(r'疑似符号|得分点|\bskill\b|建议(?:进一步)?补充|(?:正文|本稿|本[章节段])[^。；\n]{0,20}(?:待核实|待完善|待确认|自评|评分)|(?:待补充|待核实|待完善)|(?:资料|参数|差异|冲突)[^。；\n]{0,12}(?:未闭合|尚未关闭)',re.I)
+LANGUAGE_CONTEXT_RE = re.compile(r'监理|审图|图纸会审|审查意见|审核意见|设计单位|整改通知|禁止|不得|严禁|例如|示例|[“「「]|依据[^。；]{0,16}意见')
+
+
+def language_checks(records):
+    failures, warnings = [], []
+    for rec in records:
+        text = normalize_spaces(rec.get('text',''))
+        high = EDITORIAL_RE.search(text)
+        low = EDITORIAL_WARN_RE.search(text)
+        if not high and not low:
+            continue
+        hit = high or low
+        detail = {**{k:v for k,v in rec.items() if k!='text'}, 'text':text[:240], 'match':hit.group(0)}
+        # 报告/引用/禁用示例可能属于正常施工过程；必须语义复核，不能自动放行。
+        if high and not LANGUAGE_CONTEXT_RE.search(text):
+            failures.append(detail)
+        else:
+            warnings.append(detail)
+    return [CheckResult('正文内部编制语言','FAIL' if failures else 'PASS',
+             '明确内部审查/编制语言须定点修正；不得编造事实掩盖冲突。' if failures else '未命中高确定性内部语言；不替代AI语义复核。', failures or None),
+            CheckResult('正文异常用语_语境复核','WARN' if warnings else 'PASS',
+             '需逐条结合施工语境判断，记录处置，禁止机械删除技术表达。' if warnings else '未发现待判定用语。', warnings or None)]
+
+
+def document_language_records(path):
+    import zipfile
+    import xml.etree.ElementTree as ET
+    ns={'w':'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+        'a':'http://schemas.openxmlformats.org/drawingml/2006/main'}
+    records=[]
+    with zipfile.ZipFile(path) as z:
+        for part in z.namelist():
+            if not re.fullmatch(r'word/(?:document|header\d+|footer\d+|footnotes|endnotes)\.xml',part):continue
+            root=ET.fromstring(z.read(part))
+            for i,para in enumerate(root.findall('.//w:p',ns),1):
+                # 排除修订删除文字；w:t覆盖表格、域缓存、文本框，跨run合并。
+                texts=[t.text or '' for t in para.iter() if t.tag in ('{'+ns['w']+'}t','{'+ns['a']+'}t')]
+                if texts:records.append({'part':part,'paragraph':i,'text':''.join(texts)})
+    return records
 
 
 def rules_digest(rules):
@@ -1671,8 +1705,7 @@ def portable_checks(document, rules):
                 actual_hashes = [hashlib.sha256(p['bytes']).hexdigest() for p in pics]
                 valid = bool(item.get('replaced') is True and item.get('source_record') and item.get('source_verified') is True and expected_hash in actual_hashes)
                 out.append(CheckResult('真实照片_'+name,'PASS' if valid else 'FAIL','实景图片须邻接图题、绑定嵌入图片哈希、有来源并完成真实性人工核验。'))
-    editorial = [{'block': i+1,'text': b['text'][:180]} for i,b in enumerate(blocks) if EDITORIAL_RE.search(b['text'])]
-    out.append(CheckResult('正文内部编制语言','FAIL' if editorial else 'PASS','发现内部编制说明，须改为施工执行语言。' if editorial else '未发现已知内部编制关键词；仍需逐段语义复核。',editorial))
+    out.extend(language_checks(document_language_records(document)))
     return out
 
 
@@ -1680,7 +1713,7 @@ def static_audit(document, rules_path, report_path,page_dir=None):
     rules = load_rules(rules_path,page_dir)
     results = portable_checks(document, rules)
     overall = 'FAIL' if any(x.status=='FAIL' for x in results) else 'PASS'
-    report = {'audit_version':'1.6.0', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
+    report = {'audit_version':'1.7.0', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
               'rules_sha256':rules_digest(rules), 'photo_delivery_stage':rules.get('photo_delivery_stage'),
               'delivery_status':overall, 'checks':[asdict(x) for x in results],
               'notes':['静态核验不使用Word，不能证明实际页数、版式、照片真实性或技术参数正确。']}

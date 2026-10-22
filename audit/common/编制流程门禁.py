@@ -111,7 +111,7 @@ def cmd_init(state_path: Path, force: bool):
     front = int(vals["FRONT_MATTER_PAGES"]) if vals else 0
 
     state = {
-        "schema_version": "3.0",
+        "schema_version": "3.1",
         "module_registry": {},
         "pilot": {},
         "startup": startup_template(),
@@ -696,9 +696,14 @@ def cmd_delivery(a):
     common=importlib.util.module_from_spec(spec)
     sys.modules[spec.name]=common
     spec.loader.exec_module(common)
-    for check in common.portable_checks(a.document,rules):
+    fresh_checks = common.portable_checks(a.document,rules)
+    for check in fresh_checks:
         if check.status=='FAIL':
             errors.append(check.name+': '+check.message)
+    # 新增语境WARN不能借旧静态报告逃过现有WARN处置门禁。
+    fresh_warnings=[vars(c) for c in fresh_checks if c.status in ('WARN','SKIP')]
+    warning_names={x['name'] for x in fresh_warnings}
+    static['checks']=[x for x in static.get('checks',[]) if x.get('name') not in warning_names]+fresh_warnings
     stage=rules.get('photo_delivery_stage')
     if stage not in ('draft','final') or static.get('photo_delivery_stage')!=stage:
         errors.append('照片交付阶段未一致确认')
@@ -841,6 +846,56 @@ def _manuscript(path):
     return text,len(_normal('\n'.join(lines)))
 
 
+REVIEW_CONTRACT = '2026-10-22'
+
+
+def module_requirements_digest(state,module):
+    import hashlib
+    reqs=[r for r in state['plan']['requirements'] if r['id'] in module['requirement_ids']]
+    return hashlib.sha256(json.dumps(reqs,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+
+
+def module_review_errors(state,module,text,review,base):
+    errors=[]
+    language=review.get('construction_language_review') or {}
+    if language.get('reviewed') is not True or (type(language.get('unresolved_count')) is not int or language.get('unresolved_count') != 0) or not language.get('conclusion'):
+        errors.append('模块施工语言未复核或仍有内部审查语言待处理')
+    scoring=review.get('scoring_review') or {}
+    reqs={r['id']:r for r in state['plan']['requirements'] if r['id'] in module['requirement_ids']}
+    expected={rid for rid,r in reqs.items() if r.get('scoring') is True}
+    conditions=scoring.get('conditions')
+    if not isinstance(conditions,list) or not scoring.get('conclusion'):
+        return errors+['模块缺优秀条件轻量复核scoring_review及结论']
+    ids=[x.get('requirement_id') for x in conditions if isinstance(x,dict)]
+    if len(ids)!=len(conditions) or len(ids)!=len(set(ids)) or not set(ids).issubset(reqs) or not expected.issubset(ids):
+        errors.append('模块评分条件复核缺项、重复或引用非本模块责任')
+    if not conditions and not scoring.get('not_applicable_reason'):
+        errors.append('无评分责任须说明不适用依据，不得省略已有评分条件')
+    for x in conditions:
+        if not isinstance(x,dict):continue
+        rid=x.get('requirement_id');req=reqs.get(rid,{})
+        if req.get('scoring') is False:errors.append('普通施工需求不能冒充招标评分条件：'+str(rid))
+        if x.get('criterion_quote')!=req.get('scope'):
+            errors.append('优秀条件须对应需求中保留的评分原文：'+str(rid))
+        for key in ('targeted','technical_depth','project_basis','substantive_response'):
+            if x.get(key) is not True:errors.append('评分措施缺项或深度不足须先补强：'+str(rid)+'/'+key)
+        evidence=x.get('evidence') or []
+        if not evidence or any(not e.get('locator') or not fresh_file(e,base) for e in evidence):
+            errors.append('优秀条件复核缺真实项目/招标依据：'+str(rid))
+        quote=x.get('response_quote','')
+        if not isinstance(quote,str) or len(_normal(quote))<20 or _normal(quote) not in _normal(text):
+            errors.append('优秀条件复核缺当前模块施工措施原文：'+str(rid))
+        if x.get('status') not in ('satisfied','deferred') or not x.get('conclusion'):
+            errors.append('优秀条件复核缺状态或判断依据：'+str(rid))
+        if x.get('status')=='deferred' and not all(x.get(k) for k in ('remaining_condition','responsible_module_id')):
+            errors.append('跨模块未完成条件须登记剩余内容及责任模块：'+str(rid))
+        if x.get('status')=='deferred' and x.get('responsible_module_id') not in _ids(state):
+            errors.append('未完成条件引用未知责任模块：'+str(rid))
+        if 'self_score' in x or 'self_score' in scoring:
+            errors.append('模块轻量复核不强行评分，模拟评分沿用40/75/final清单')
+    return errors
+
+
 def registry_errors(state,base,ids=None,document=None):
     errors=[]; registry=state.get('module_registry') or {}
     selected=ids if ids is not None else _ids(state)
@@ -853,6 +908,9 @@ def registry_errors(state,base,ids=None,document=None):
             errors.append('模块正文源丢失或改变：'+mid)
         if not fresh_file({'path':row.get('review_path'),'sha256':row.get('review_sha256')},base):
             errors.append('模块核查记录丢失或改变：'+mid)
+        module=next((m for m in _modules(state) if m.get('id')==mid),None)
+        if row.get('review_contract') == REVIEW_CONTRACT and module and row.get('requirements_sha256') != module_requirements_digest(state,module):
+            errors.append('模块评分/范围依据已改变，须定点复核：'+mid)
         if word_text is not None:
             quotes=row.get('probe_quotes') or []
             if len(quotes)<2 or any(_normal(q) not in word_text for q in quotes):
@@ -904,6 +962,8 @@ def detailed_plan_errors(state,base,target):
         if not isinstance(req,dict) or not req.get('id') or not req.get('scope'):
             errors.append('内容需求缺id或实质scope');continue
         req_ids.append(req['id']);evidence=req.get('evidence') or []
+        if state.get('schema_version') == '3.1' and type(req.get('scoring')) is not bool:
+            errors.append('内容需求须由AI标记是否承担评分条件scoring：'+req['id'])
         if not evidence or any(not x.get('locator') or not fresh_file(x,base) for x in evidence):errors.append('需求缺真实资料/位置证据：'+req['id'])
     if len(req_ids)!=len(set(req_ids)):errors.append('内容需求ID重复')
     if not isinstance(mods,list) or not mods:
@@ -1074,6 +1134,8 @@ def cmd_module_checkpoint(state_path,mid,source_path,review_path):
     if review.get('module_id')!=mid or review.get('source_sha256')!=sha256(source_path):errors.append('模块复核记录未绑定实际正文源')
     for key in ('fact_sources_reviewed','technical_depth_reviewed','interfaces_reviewed','repetition_reviewed'):
         if review.get(key) is not True:errors.append('模块实质复核缺项：'+key)
+    if module:
+        errors += module_review_errors(state,module,text,review,review_path.parent)
     if not review.get('conclusion'):errors.append('模块复核缺结论')
     if module and set(review.get('covered_requirement_ids') or [])!=set(module['requirement_ids']):errors.append('模块没有完成其评分/范围责任')
     quotes=review.get('probe_quotes') or []
@@ -1086,6 +1148,7 @@ def cmd_module_checkpoint(state_path,mid,source_path,review_path):
         if key!=mid and row.get('source_sha256')==sha256(source_path):errors.append('不同模块不能重复使用完全相同正文')
     if errors:return emit_gate(errors,'')
     state.setdefault('module_registry',{})[mid]={'status':'complete','source_path':str(source_path.resolve()),'source_sha256':sha256(source_path),
+        'review_contract':REVIEW_CONTRACT,'requirements_sha256':module_requirements_digest(state,module),
         'review_path':str(review_path.resolve()),'review_sha256':sha256(review_path),'normal_characters':normal_chars,'probe_quotes':quotes,'saved_at':now_iso()}
     for cp in state.get('checkpoints',{}).values():
         if mid in cp.get('module_ids',[]) and cp.get('module_source_hashes',{}).get(mid)!=sha256(source_path):

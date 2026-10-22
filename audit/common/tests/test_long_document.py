@@ -42,7 +42,7 @@ def start_case(target=395,tol=5,front=1):
  mods=[];reqs=[]
  for i in range(n):
   rid=f'R{i+1:02}';mid=f'M{i+1:02}';chapter='第一章 技术方案' if i<n//2 else '第二章 保障措施'
-  reqs.append({'id':rid,'scope':'fixture scope '+rid,'evidence':[evidence(SOURCE)]})
+  reqs.append({'id':rid,'scope':'fixture scope '+rid,'scoring':False,'evidence':[evidence(SOURCE)]})
   mods.append({'id':mid,'chapter':chapter,'section':'第一节 '+mid,'scope':'fixture content scope '+mid,'basis':'fixture scoring responsibility','requirement_ids':[rid],'primary_for':[rid], 'evidence':[evidence(SOURCE)],'text_pages':per-1,'table_pages':.5,'figure_pages':.5,'planned_pages':per,'estimated_normal_chars':(per-1)*100})
  count40=max(1,round(n*.4));count75=max(count40+1,min(n-1,round(n*.75)))
  boundaries={'40':[m['id'] for m in mods[:count40]],'75':[m['id'] for m in mods[:count75]]}
@@ -95,7 +95,7 @@ def module_files(m):
  q2=('模块'+mid+'发现检查偏差时，按批准方案处理并复查，满足移交条件后进入后续工序，保留相应记录。')*2
  text=q1+'\n'+q2+'\n';text+=('本模块'+mid+'施工执行记录用于控制工序及接口。\n')*max(1,int((m['estimated_normal_chars']-len(f._normal(text)))/24))
  src=BASE/(mid+'.md');src.write_text(text)
- rv=BASE/(mid+'-review.json');write(rv,{'module_id':mid,'source_sha256':f.sha256(src),'covered_requirement_ids':m['requirement_ids'],'fact_sources_reviewed':True,'technical_depth_reviewed':True,'interfaces_reviewed':True,'repetition_reviewed':True,'conclusion':'synthetic review','probe_quotes':[q1,q2]})
+ rv=BASE/(mid+'-review.json');write(rv,{'module_id':mid,'source_sha256':f.sha256(src),'covered_requirement_ids':m['requirement_ids'],'fact_sources_reviewed':True,'technical_depth_reviewed':True,'interfaces_reviewed':True,'repetition_reviewed':True,'conclusion':'synthetic review','construction_language_review':{'reviewed':True,'unresolved_count':0,'conclusion':'synthetic language judgment'},'scoring_review':{'conditions':[],'not_applicable_reason':'fixture requirements only; no tender scoring conditions','conclusion':'synthetic responsibility judgment'},'probe_quotes':[q1,q2]})
  return src,rv,[q1,q2]
 for m in s['plan']['modules']:
  src,rv,qs=module_files(m);MODULE_SOURCES[m['id']]=src;REVIEWS[m['id']]=rv;QUOTES[m['id']]=qs
@@ -154,3 +154,4 @@ check('Common Word location follows current project',c.load_rules(None)['body_st
 rc=subprocess.run([sys.executable,str(ROOT/'编制流程门禁.py'),'run-page-audit','--pilot','--document',str(PILOT),'--report',str(BASE/'no-word.json')],capture_output=True,text=True)
 check('Linux cannot fake native Word pilot execution',rc.returncode==3)
 print(json.dumps({'passed':len(RESULTS),'tests':RESULTS,'limits':'Synthetic report/interface tests only; Windows Word was NOT executed.'},ensure_ascii=False,indent=2))
+
