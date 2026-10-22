@@ -63,5 +63,7 @@ jobs:
         if: always()
         with:
           name: upgrade-native-word-${{ github.run_id }}
-          path: upgrade-${{ github.run_id }}/upgrade-word.json
+          path: |
+            upgrade-${{ github.run_id }}/upgrade-word.json
+            upgrade-${{ github.run_id }}/word-toc-evidence/**
           if-no-files-found: warn

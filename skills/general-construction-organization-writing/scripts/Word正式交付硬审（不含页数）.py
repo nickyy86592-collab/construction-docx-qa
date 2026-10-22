@@ -130,8 +130,7 @@ def normalize_toc_title(text: str) -> str:
     """去掉目录点线和末尾页码，用于首页目录 vs 正文一级标题比对。"""
     t = normalize_spaces(text)
     # 例如：第一章 工程概况........2 / 第一章 工程概况  2
-    t = re.sub(r"[\.·…．。]{2,}\s*\d+\s*$", "", t)
-    t = re.sub(r"\s+\d+\s*$", "", t)
+    t = re.sub(r"(?:[\.·…．。]{2,}\s*|\s+)(?:\d+|[ivxlcdmIVXLCDM]+)\s*$", "", t)
     return t.strip()
 
 
@@ -394,7 +393,7 @@ def check_front_page_and_body(doc, records: List[Dict[str, Any]], headings: List
     actual, extra, trailing = [], [], []
     started = False
     for rec in toc_records:
-        text = normalize_toc_title(rec['text'])
+        text = normalize_toc_title(rec['text']) if toc_layout(rules)['show_page_numbers'] else normalize_spaces(rec['text'])
         level, _ = classify_heading(text, rules)
         if level:
             started = True
@@ -404,7 +403,7 @@ def check_front_page_and_body(doc, records: List[Dict[str, Any]], headings: List
                 extra.append(rec['text'])
         elif started and levels and not re.fullmatch(r'[\d\s.·…．。—-]+',text) and text not in ('目录','目 录'):
             trailing.append(rec['text'])
-    expected = [(h['level'],normalize_toc_title(h['text'])) for h in headings if h['level'] in levels]
+    expected = [(h['level'],normalize_spaces(h['text'])) for h in headings if h['level'] in levels]
     out.append(CheckResult('前置目录_与正文导航一致', 'PASS' if actual==expected and not extra else 'FAIL',
         '按项目目录层级比对正文标题名称、数量、顺序及Word导航。',
         {'toc':actual,'body':expected,'unexpected_levels':extra}))
@@ -483,7 +482,12 @@ def check_toc_layout_static(document, rules):
             text=all_text(p).strip();level,_=classify_heading(normalize_toc_title(text),rules)
             if level not in levels:continue
             checked+=1;detail={'paragraph':i+1,'text':text[:180]}
-            if not cfg['show_page_numbers']:continue
+            if not cfg['show_page_numbers']:
+                if re.search(r'\t\s*(?:\d+|[ivxlcdmIVXLCDM]+)\s*$',text):
+                    failures.append({**detail,'reason':'有效项目规则要求不显示目录页码，实际仍有页码'})
+                elif TOC_PAGE_RE.search(text):
+                    warnings.append({**detail,'reason':'无页码目录末尾疑似页码，须核实是否属于标题'})
+                continue
             m=TOC_PAGE_RE.search(text)
             if not m:
                 warnings.append({**detail,'reason':'目录项页码无法可靠识别'});continue
@@ -510,7 +514,7 @@ def check_toc_layout_static(document, rules):
             matches=[(pos,pair) for pos,pair in right_tabs if not cfg['right_align'] or abs(pos/20-target)<=2]
             if not matches:
                 failures.append({**detail,'reason':'页码右制表位未落在统一版心右边界','target_pt':target,'tabs':right_tabs});continue
-            if any(pair[1]!=cfg['leader'] for _,pair in matches):
+            if not any(pair[1]==cfg['leader'] for _,pair in matches):
                 failures.append({**detail,'reason':'目录引导符不符合有效项目规则','expected':cfg['leader'],'tabs':matches})
             if len(tabs)>1:
                 warnings.append({**detail,'reason':'存在多个自定义制表位，须用Word核实末个页码实际落点'})
@@ -531,24 +535,33 @@ def check_toc_layout_word(doc, records, headings, rules):
         detail={'paragraph':rec['index'],'page':rec['page'],'text':rec['text'][:160]}
         try:
             p=doc.Paragraphs(rec['index']);raw=clean_text(p.Range.Text);m=TOC_PAGE_RE.search(raw)
-            if not cfg['show_page_numbers']:continue
-            if not m or '\t' not in raw:
-                failures.append({**detail,'reason':'目录缺可识别页码或真实制表符'});continue
+            if not cfg['show_page_numbers']:
+                if re.search(r'\t\s*(?:\d+|[ivxlcdmIVXLCDM]+)\s*$',raw):
+                    failures.append({**detail,'reason':'有效项目规则要求不显示目录页码，实际仍有页码'})
+                elif TOC_PAGE_RE.search(raw):
+                    warnings.append({**detail,'reason':'无页码目录末尾疑似页码，须核实是否属于标题'})
+                continue
+            if not m:
+                warnings.append({**detail,'reason':'目录页码无法可靠识别，须核对实际页码格式'});continue
+            if not re.search(r'\t\s*'+re.escape(m[1])+r'\s*$',raw):
+                failures.append({**detail,'reason':'页码前缺真实制表符'});continue
             token=m[1];tabs=[]
             for n in range(1,int(p.Format.TabStops.Count)+1):
                 tab=p.Format.TabStops(n);tabs.append((float(tab.Position),int(tab.Alignment),int(tab.Leader)))
             ps=p.Range.Sections(1).PageSetup
             if int(ps.TextColumns.Count)>1:
                 warnings.append({**detail,'reason':'多栏目录需按实际栏边界人工复核'});continue
-            if float(ps.Gutter)>0:
+            if float(ps.Gutter)>0 or bool(getattr(ps,'MirrorMargins',False)):
                 warnings.append({**detail,'reason':'装订线或对称页边布局须结合实际页面核实右边界'});continue
             target=float(ps.PageWidth)-float(ps.LeftMargin)-float(ps.RightMargin)-float(ps.Gutter)-cfg['right_inset_pt']
             matched=[t for t in tabs if (not cfg['right_align'] or t[1]==2 and abs(t[0]-target)<=2)]
             leader={'none':0,'dots':1,'dashes':2,'lines':3}[cfg['leader']]
-            if not matched or any(t[2]!=leader for t in matched):
+            if not matched or not any(t[2]==leader for t in matched):
                 failures.append({**detail,'reason':'Word有效制表位、右对齐或引导符配置不符','tabs':tabs,'target_pt':target});continue
+            if not cfg['right_align'] and len(matched)>1:
+                warnings.append({**detail,'reason':'非右对齐例外存在多个制表位，须确认页码实际使用的引导符'})
             number=p.Range.Duplicate
-            if not number.Find.Execute(FindText=token,Forward=False,Wrap=0):
+            if not number.Find.Execute(FindText=token,Forward=False,Wrap=0,MatchWildcards=False,MatchCase=True,MatchWholeWord=False,Format=False):
                 warnings.append({**detail,'reason':'Word无法定位页码字符'});continue
             try:doc.ActiveWindow.ScrollIntoView(number,True)
             except Exception:pass
@@ -559,7 +572,7 @@ def check_toc_layout_word(doc, records, headings, rules):
             if cfg['right_align'] and abs(x-right)>3:
                 failures.append({**detail,'reason':'页码实际右边界未对齐或超出版心','actual_x_pt':x,'expected_x_pt':right})
             before=doc.Range(int(p.Range.Start),int(number.Start));title=raw.rsplit('\t',1)[0].rstrip()
-            if title and before.Find.Execute(FindText=title[-1],Forward=False,Wrap=0):
+            if title and before.Find.Execute(FindText=title[-1],Forward=False,Wrap=0,MatchWildcards=False,MatchCase=True,MatchWholeWord=False,Format=False):
                 y1=float(before.Information(6));y2=float(number.Information(6))
                 if page_of_range(before)!=page_of_range(number):
                     failures.append({**detail,'reason':'页码与标题末行分在不同页'})
@@ -570,7 +583,7 @@ def check_toc_layout_word(doc, records, headings, rules):
             else:warnings.append({**detail,'reason':'无法可靠确认标题末行与页码是否同一行'})
             if i<len(expected) and token.isdigit():
                 h=expected[i];hr=doc.Paragraphs(h['index']).Range
-                if normalize_toc_title(rec['text'])==normalize_toc_title(h['text']) and int(token)!=int(hr.Information(1)):
+                if normalize_toc_title(rec['text'])==normalize_spaces(h['text']) and int(token)!=int(hr.Information(1)):
                     failures.append({**detail,'reason':'目录页码与当前Word正文实际显示页码不一致','toc_page':token,'actual_page':int(hr.Information(1))})
             elif not token.isdigit():warnings.append({**detail,'reason':'非阿拉伯页码须结合项目页码格式核实对应关系'})
             measured.append({**detail,'actual_right_x_pt':x,'expected_right_x_pt':right})
@@ -578,7 +591,7 @@ def check_toc_layout_word(doc, records, headings, rules):
             warnings.append({**detail,'reason':'Word目录测量未完成：'+str(exc)})
     if not entries:failures.append({'reason':'当前要求有目录，Word前置范围内未定位到目录项'})
     return [CheckResult('目录页码对齐_Word','FAIL' if failures else 'PASS','按Word有效属性、实际坐标、标题末行及正文显示页码核验。',failures or measured),
-            CheckResult('目录视觉与页码_待复核','WARN' if warnings else 'PASS','需结合Word实际渲染处理目录疑点；测量未完成不能当通过。' if warnings else '目录实际测量完成，仍按既有流程查看渲染效果。',warnings or None)]
+            CheckResult('目录视觉与页码_待复核','WARN' if warnings else 'PASS','需结合Word实际渲染处理目录疑点；测量未完成不能当通过。' if warnings else ('已检查不显示页码的项目规则；仍须核对目录名称及实际渲染。' if not cfg['show_page_numbers'] else '目录实际测量完成，仍按既有流程查看渲染效果。'),warnings or None)]
 
 
 def check_project_parameter_completeness(rules: Dict[str, Any]) -> CheckResult:
@@ -604,7 +617,7 @@ def check_required_level1(headings: List[Dict[str, Any]], rules: Dict[str, Any])
     if raw is None:
         return CheckResult("招标文件一级章节", "FAIL", "尚未取得招标文件对一级章节的要求，无法完成硬审。")
     required = [normalize_spaces(x) for x in raw if normalize_spaces(x)]
-    actual = [normalize_toc_title(h["text"]) for h in headings if h["level"] == 1]
+    actual = [normalize_spaces(h["text"]) for h in headings if h["level"] == 1]
     if not required:
         return CheckResult("招标文件一级章节", "PASS", "已确认招标文件未规定固定一级章节清单；不执行名称逐项比对。", {"actual": actual})
     status = "PASS" if actual == required else "FAIL"
@@ -1638,7 +1651,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         overall = "PASS" if not hard_failures else "FAIL"
 
         report = {
-            "audit_version": "1.8.0",
+            "audit_version": "1.8.1",
             "rules_sha256": rules_digest(rules),
             "photo_delivery_stage": rules.get("photo_delivery_stage"),
             "layout_engine": "Microsoft Word",
@@ -1874,7 +1887,7 @@ def static_audit(document, rules_path, report_path,page_dir=None):
     rules = load_rules(rules_path,page_dir)
     results = portable_checks(document, rules)
     overall = 'FAIL' if any(x.status=='FAIL' for x in results) else 'PASS'
-    report = {'audit_version':'1.8.0', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
+    report = {'audit_version':'1.8.1', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
               'rules_sha256':rules_digest(rules), 'photo_delivery_stage':rules.get('photo_delivery_stage'),
               'delivery_status':overall, 'checks':[asdict(x) for x in results],
               'notes':['静态核验不使用Word，不能证明实际页数、版式、照片真实性或技术参数正确。']}

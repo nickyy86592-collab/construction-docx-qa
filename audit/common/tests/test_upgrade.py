@@ -125,6 +125,129 @@ def word_suite(base):
     check('Word actual TOC alignment '+kind,not [x for x in toc_checks if x.status in ('FAIL','WARN')])
     doc.ExportAsFixedFormat(str((page/'fixture.word.pdf').resolve()),17)
    finally:doc.Close(False)
+  # Real Word integration fixture: never executed by the portable branch.
+  # Keep evidence outside TemporaryDirectory so exported pages remain reviewable.
+  import os
+  from dataclasses import asdict
+  from docx import Document
+  from docx.enum.section import WD_SECTION
+  from docx.shared import Pt
+  native=Path(os.environ.get('WORD_TOC_EVIDENCE_DIR',str(Path.cwd()/'word-toc-evidence'))).resolve()
+  native.mkdir(parents=True,exist_ok=True)
+  seed=native/'native-toc.seed.docx';saved=native/'native-toc.saved.docx'
+  d=Document();d.sections[0].page_width=Pt(595.3);d.sections[0].page_height=Pt(841.9)
+  for section in d.sections:
+   section.left_margin=section.right_margin=Pt(56.7)
+   section.top_margin=section.bottom_margin=Pt(56.7)
+  d.add_paragraph('项目名称：原生自动目录真实Word集成样例')
+  d.add_paragraph('目录')
+  marker='NATIVE_TOC_INSERT_HERE';d.add_paragraph(marker)
+  chapter_titles=[]
+  # Each chapter contributes all three levels. Long titles force natural wraps;
+  # sufficient entries force the TOC onto multiple pages without manual breaks.
+  for chapter in range(1,21):
+   if chapter<=3:d.add_section(WD_SECTION.NEW_PAGE)
+   suffix='复杂条件下施工工序与资源接口的统筹安排及质量安全检验控制要求'
+   title=f'第{chapter}章 '+suffix*3
+   chapter_titles.append(title);d.add_heading(title,1)
+   d.add_paragraph('完成材料报审及工作面核验后组织作业，检查合格后移交。')
+   d.add_heading('第一节 施工准备及跨专业资源接口检查',2)
+   d.add_paragraph('结合现场工作面条件组织工序交接。')
+   d.add_heading('一、过程检查与验收记录',3)
+   d.add_paragraph('施工完成后按批准方案进行复查并形成验收记录。')
+  d.save(seed)
+  doc=word.Documents.Open(str(seed),ReadOnly=False,AddToRecentFiles=False)
+  try:
+   # Restart displayed page numbers in body sections: physically short fixture,
+   # genuine one-, two-, and three-digit PAGEREF results (2, 12, 123).
+   for section_index,start_number in ((2,2),(3,12),(4,123)):
+    footer=doc.Sections(section_index).Footers(1);footer.LinkToPrevious=False
+    numbers=footer.PageNumbers;numbers.RestartNumberingAtSection=True;numbers.StartingNumber=start_number
+    if not int(numbers.Count):numbers.Add(PageNumberAlignment=2,FirstPage=True)
+   anchor=doc.Content.Duplicate
+   if not anchor.Find.Execute(FindText=marker,Forward=True,Wrap=0,MatchWildcards=False,Format=False):
+    raise AssertionError('native TOC insertion marker absent')
+   anchor.Text='';anchor.Collapse(1)
+   toc=doc.TablesOfContents.Add(Range=anchor,UseHeadingStyles=True,UpperHeadingLevel=1,LowerHeadingLevel=3,
+       UseFields=False,RightAlignPageNumbers=True,IncludePageNumbers=True,UseHyperlinks=True,
+       HidePageNumbersInWeb=False,UseOutlineLevels=True)
+   toc.TabLeader=1
+   setup=doc.Sections(1).PageSetup
+   width=float(setup.PageWidth)-float(setup.LeftMargin)-float(setup.RightMargin)
+   for level in (1,2,3):
+    style=doc.Styles(-19-level)  # Word built-in wdStyleTOC1/2/3, locale-independent.
+    style.Font.Size=11
+    fmt=style.ParagraphFormat;fmt.OutlineLevel=10;fmt.LeftIndent=(level-1)*14
+    fmt.FirstLineIndent=0;fmt.RightIndent=0;fmt.KeepWithNext=False;fmt.KeepTogether=True
+    fmt.LineSpacingRule=0;fmt.SpaceBefore=0;fmt.SpaceAfter=3
+    fmt.TabStops.ClearAll();fmt.TabStops.Add(Position=width,Alignment=2,Leader=1)
+   previous=None;stable=False
+   for attempt in range(6):
+    doc.Fields.Update();doc.Repaginate();toc.Update();doc.Repaginate()
+    first_body=doc.Range(int(doc.Sections(2).Range.Start),int(doc.Sections(2).Range.Start))
+    signature=(int(first_body.Information(3)),str(toc.Range.Text))
+    if signature==previous:stable=True;break
+    previous=signature
+   if not stable:raise AssertionError('native TOC pagination did not stabilize after six updates')
+   doc.SaveAs2(str(saved),FileFormat=12)
+  finally:doc.Close(False)
+  # Reopen the actual saved delivery copy; do not update fields in this audit.
+  doc=word.Documents.Open(str(saved),ReadOnly=True,AddToRecentFiles=False)
+  try:
+   doc.Repaginate();doc.ActiveWindow.View.Type=3
+   toc=doc.TablesOfContents(1);records=c.get_paragraph_records(doc)
+   body_start_pos=int(doc.Sections(2).Range.Start)
+   first_body=next(r for r in records if r['start']>=body_start_pos and r['outline']==1)
+   body_start=int(first_body['page']);front=body_start-1
+   toc_entries=[r for r in records if int(toc.Range.Start)<=r['start']<int(toc.Range.End)
+                and c.classify_heading(c.normalize_toc_title(r['text']))[0] in (1,2,3)]
+   if not toc_entries:raise AssertionError('Word-created TOC has no recognized entries')
+   toc_span=[min(r['page'] for r in toc_entries),max(r['page'] for r in toc_entries)]
+   page_rule=native/'项目页数硬审.py'
+   page_rule.write_text(f'EXPECTED_BODY_PAGES=50\nPAGE_TOLERANCE=1\nFRONT_MATTER_PAGES={front}\n',encoding='utf-8')
+   fm={'cover_required':True,'toc_levels':[1,2,3],'cover_page_range':[1,1],'toc_page_range':toc_span}
+   rules=c.load_rules(write(native/'format.json',{'front_matter':fm}),native)
+   headings,hchecks=c.extract_heading_structure(records,body_start,rules)
+   front_checks=c.check_front_page_and_body(doc,records,headings,rules,int(doc.ComputeStatistics(2)))+hchecks
+   static_checks=c.check_toc_layout_static(saved,rules)
+   toc_checks=c.check_toc_layout_word(doc,records,headings,rules)
+   wrap_rows=[];indent_rows=[]
+   for rec in toc_entries:
+    p=doc.Paragraphs(rec['index']);raw=c.clean_text(p.Range.Text)
+    token=c.TOC_PAGE_RE.search(raw)
+    if not token:raise AssertionError('native TOC entry has no page-number token')
+    number=p.Range.Duplicate
+    if not number.Find.Execute(FindText=token[1],Forward=False,Wrap=0,MatchWildcards=False,MatchWholeWord=False,Format=False):
+     raise AssertionError('native TOC page token cannot be measured')
+    doc.ActiveWindow.ScrollIntoView(p.Range,True)
+    first=doc.Range(int(p.Range.Start),int(p.Range.Start));last=doc.Range(int(number.End),int(number.End))
+    level=c.classify_heading(c.normalize_toc_title(rec['text']))[0]
+    wrap_rows.append({'paragraph':rec['index'],'start_y':float(first.Information(6)),
+                     'number_y':float(number.Information(6)),'line_count':int(p.Range.ComputeStatistics(1))})
+    indent_rows.append({'level':level,'left_indent':float(p.Format.LeftIndent),'right_x':float(last.Information(5))})
+   chapter_pages=[]
+   for title in chapter_titles[:3]:
+    h=next(h for h in headings if h['text']==title)
+    chapter_pages.append(int(doc.Paragraphs(h['index']).Range.Information(1)))
+   # Export before assertions: a failed geometry check still leaves visual evidence.
+   doc.ExportAsFixedFormat(str(native/'native-toc.word.pdf'),17)
+   evidence={'engine':'Microsoft Word','reopened_saved_copy':str(saved),'body_start_physical_page':body_start,
+             'toc_page_range':toc_span,'chapter_displayed_pages':chapter_pages,
+             'wrap_measurements':wrap_rows,'indent_measurements':indent_rows,
+             'checks':[asdict(x) for x in front_checks+static_checks+toc_checks]}
+   (native/'native-toc.measurements.json').write_text(json.dumps(evidence,ensure_ascii=False,indent=2),encoding='utf-8')
+   check('Word native TOC persisted after Add Update SaveAs reopen',int(doc.TablesOfContents.Count)==1 and len(toc_entries)==60)
+   check('Word native TOC current front matter and navigation integration',not [x for x in front_checks if x.status=='FAIL'])
+   check('Word native TOC static properties from saved cache',not [x for x in static_checks if x.status in ('FAIL','WARN')])
+   check('Word native TOC actual page alignment and current page numbers',not [x for x in toc_checks if x.status in ('FAIL','WARN')])
+   check('Word native TOC spans multiple real pages',toc_span[1]>toc_span[0])
+   check('Word native TOC natural long-title wraps',any(r['line_count']>=2 and r['number_y']>r['start_y']+6 for r in wrap_rows))
+   check('Word native TOC one two three digit displayed pages',chapter_pages==[2,12,123])
+   lefts={level:{round(r['left_indent'],1) for r in indent_rows if r['level']==level} for level in (1,2,3)}
+   check('Word native TOC three increasing left indents',all(len(lefts[level])==1 for level in lefts) and next(iter(lefts[1]))<next(iter(lefts[2]))<next(iter(lefts[3])))
+   rights=[r['right_x'] for r in indent_rows]
+   check('Word native TOC all levels share actual right edge',all(x>=0 for x in rights) and max(rights)-min(rights)<=3)
+  finally:doc.Close(False)
  finally:word.Quit()
 
 
@@ -241,6 +364,65 @@ def toc_portable_cases(base):
  check('TOC Word-interface gutter needs review',result(word_case(gutter=10))=='WARN')
  check('TOC Word-interface unavailable coordinate WARN',result(word_case(x=-1))=='WARN')
 
+
+def toc_boundary_regressions(base):
+ from docx import Document
+ from docx.enum.text import WD_TAB_ALIGNMENT,WD_TAB_LEADER
+ from docx.shared import Pt
+ from types import SimpleNamespace as NS
+ def status(rows):return 'FAIL' if any(r.status=='FAIL' for r in rows) else 'WARN' if any(r.status=='WARN' for r in rows) else 'PASS'
+ def fixture(name,text,stops=None):
+  d=Document();d.add_paragraph('测试项目');p=d.add_paragraph(text)
+  width=(d.sections[0].page_width-d.sections[0].left_margin-d.sections[0].right_margin)/12700
+  for pos,a,l in stops or [(width,WD_TAB_ALIGNMENT.RIGHT,WD_TAB_LEADER.DOTS)]:p.paragraph_format.tab_stops.add_tab_stop(Pt(pos),a,l)
+  d.add_heading('第一章 施工部署',1);path=base/(name+'.docx');d.save(path);return path
+ normal={'front_matter':{'toc_levels':[1]}}
+ hidden={'front_matter':{'toc_levels':[1],'toc_layout':{'show_page_numbers':False,'source_ref':'补遗：隐藏目录页码'}}}
+ left={'front_matter':{'toc_levels':[1],'toc_layout':{'right_align':False,'source_ref':'补遗：目录页码左对齐'}}}
+ check('TOC hidden numbers still present rejected',status(c.check_toc_layout_static(fixture('hidden_bad','第一章 施工部署\t2'),hidden))=='FAIL')
+ check('TOC hidden numbers absent accepted',status(c.check_toc_layout_static(fixture('hidden_ok','第一章 施工部署'),hidden))=='PASS')
+ stops=[(18,WD_TAB_ALIGNMENT.LEFT,WD_TAB_LEADER.SPACES),(400,WD_TAB_ALIGNMENT.LEFT,WD_TAB_LEADER.DOTS)]
+ check('TOC unused left stop cannot cause false FAIL',status(c.check_toc_layout_static(fixture('left_stops','第一章 施工部署\t2',stops),left))=='WARN')
+ def front(toc,body,rr=normal):
+  records=[{'index':1,'page':1,'text':'测试项目','outline':10,'start':0,'end':5},
+   {'index':2,'page':1,'text':toc,'outline':10,'start':6,'end':25},
+   {'index':3,'page':2,'text':body,'outline':1,'start':26,'end':40,'level':1},
+   {'index':4,'page':2,'text':'施工正文内容。','outline':10,'start':41,'end':50}]
+  return c.check_front_page_and_body(NS(),records,[records[2]],dict(rr,front_page=1,body_start_page=2),2)
+ check('TOC Roman page actual front-title integration',status(front('第一章 施工部署 iv','第一章 施工部署'))=='PASS')
+ check('TOC numeric title suffix preserved in body',status(front('第一章 质量管理体系 ISO 9001 2','第一章 质量管理体系 ISO 9001'))=='PASS')
+ check('TOC hidden numeric title suffix preserved',status(front('第一章 ISO 9001','第一章 ISO 9001',hidden))=='PASS')
+ check('TOC Roman title suffix preserved in body',status(front('第一章 IV 2','第一章 IV'))=='PASS')
+ check('TOC required body title numeric suffix preserved',c.check_required_level1([{'text':'第一章 ISO 9001','level':1}],{'required_level1_titles':['第一章 ISO 9001']}).status=='PASS')
+ # Controlled COM-interface models exercise control flow, not Word pagination.
+ def wordcase(text='第一章 施工部署\t2',stops=((500,2,1),),mirror=False,rr=normal):
+  calls=[]
+  class Range:
+   def __init__(self,start=0,end=20,role='toc'):self.Start=start;self.End=end;self.role=role;self.Sections=lambda n:NS(PageSetup=NS(PageWidth=600,LeftMargin=50,RightMargin=50,Gutter=0,MirrorMargins=mirror,TextColumns=NS(Count=1)))
+   @property
+   def Text(self):return text+'\r'
+   @property
+   def Duplicate(self):return Range(self.Start,self.End)
+   @property
+   def Find(self):return NS(Execute=self.find)
+   def find(self,FindText,**kw):
+    calls.append(kw);self.Start,self.End=(12,13) if FindText=='2' else (7,8);self.role='number' if FindText=='2' else 'title';return True
+   def Information(self,n):return {1:2,3:1,5:550,6:100}.get(n,0)
+  class Tabs:
+   Count=len(stops)
+   def __call__(self,n):pos,a,l=stops[n-1];return NS(Position=pos,Alignment=a,Leader=l)
+  para=NS(Range=Range(),Format=NS(TabStops=Tabs(),LineSpacing=18))
+  doc=NS(Paragraphs=lambda n:para,Range=lambda start,end:Range(start,end))
+  rows=c.check_toc_layout_word(doc,[{'index':1,'page':1,'text':text}],[{'index':2,'page':2,'text':'第一章 施工部署','level':1}],dict(rr,body_start_page=2))
+  return rows,calls
+ check('TOC Word hidden visible numbers rejected',status(wordcase(rr=hidden)[0])=='FAIL')
+ rows,_=wordcase(text='第一章 施工部署',rr=hidden)
+ check('TOC Word hidden no false measurement claim',status(rows)=='PASS' and '实际测量完成' not in rows[-1].message)
+ check('TOC Word unused left stop needs review only',status(wordcase(stops=((18,0,0),(400,0,1)),rr=left)[0])=='WARN')
+ check('TOC Word mirror margins require actual review',status(wordcase(mirror=True)[0])=='WARN')
+ check('TOC Word unknown page label WARN',status(wordcase(text='第一章 施工部署\t甲')[0])=='WARN')
+ check('TOC Word Find ignores inherited wildcard/format',all(k.get('MatchWildcards') is False and k.get('Format') is False for k in wordcase()[1]))
+
 if __name__=='__main__':
  p=argparse.ArgumentParser();p.add_argument('--word',action='store_true');p.add_argument('--report',type=Path);a=p.parse_args()
  with tempfile.TemporaryDirectory() as tmp:
@@ -249,6 +431,7 @@ if __name__=='__main__':
   else:
    portable(base)
    toc_portable_cases(base)
- report={'version':'2026-10-22-r2','passed':len(RESULTS),'windows_word_executed':a.word,'tests':RESULTS}
+   toc_boundary_regressions(base)
+ report={'version':'2026-10-22-r3','passed':len(RESULTS),'windows_word_executed':a.word,'tests':RESULTS}
  print(json.dumps(report,ensure_ascii=False,indent=2))
  if a.report:a.report.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
