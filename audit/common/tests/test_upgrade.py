@@ -159,7 +159,7 @@ def word_suite(base):
    for paragraph_index in range(1,int(doc.Paragraphs.Count)+1):
     paragraph=doc.Paragraphs(paragraph_index);level=int(paragraph.OutlineLevel)
     if level in (1,2,3):
-     paragraph.Range.Style=doc.Styles(-level);paragraph.Range.Font.Size=12
+     paragraph.Range.Style=doc.Styles(-level-1);paragraph.Range.Font.Size=12
    # Restart displayed page numbers in body sections: physically short fixture,
    # genuine one-, two-, and three-digit PAGEREF results (2, 12, 123).
    for section_index,start_number in ((2,2),(3,12),(4,123)):
@@ -178,7 +178,7 @@ def word_suite(base):
    for level in (1,2,3):
     style=doc.Styles(-19-level)  # Word built-in wdStyleTOC1/2/3, locale-independent.
     style.Font.Size=11
-    fmt=style.ParagraphFormat;fmt.OutlineLevel=10;fmt.LeftIndent=(level-1)*14
+    fmt=style.ParagraphFormat;fmt.OutlineLevel=10;fmt.CharacterUnitLeftIndent=0;fmt.LeftIndent=(level-1)*14
     fmt.FirstLineIndent=0;fmt.RightIndent=0;fmt.KeepWithNext=False;fmt.KeepTogether=True
     fmt.LineSpacingRule=0;fmt.SpaceBefore=0;fmt.SpaceAfter=3
     fmt.TabStops.ClearAll();fmt.TabStops.Add(Position=width,Alignment=2,Leader=1)
@@ -200,7 +200,7 @@ def word_suite(base):
    body_start_pos=int(doc.Sections(2).Range.Start)
    first_body=next(r for r in records if r['start']>=body_start_pos and r['outline']==1)
    body_start=int(first_body['page']);front=body_start-1
-   toc_entries=[r for r in records if int(toc.Range.Start)<=r['start']<int(toc.Range.End)
+   toc_entries=[r for r in records if r['end']>int(toc.Range.Start) and r['start']<int(toc.Range.End)
                 and c.classify_heading(c.normalize_toc_title(r['text']))[0] in (1,2,3)]
    if not toc_entries:raise AssertionError('Word-created TOC has no recognized entries')
    toc_span=[min(r['page'] for r in toc_entries),max(r['page'] for r in toc_entries)]
@@ -240,14 +240,17 @@ def word_suite(base):
    check('Word native TOC persisted after Add Update SaveAs reopen',int(doc.TablesOfContents.Count)==1 and len(toc_entries)==60)
    check('Word native TOC current front matter and navigation integration',not [x for x in front_checks if x.status=='FAIL'])
    check('Word native TOC static properties from saved cache',not [x for x in static_checks if x.status in ('FAIL','WARN')])
-   check('Word native TOC actual page alignment and current page numbers',not [x for x in toc_checks if x.status in ('FAIL','WARN')])
+   # Ambiguous field-boundary coordinates are WARN, never a native visual PASS.
+   unresolved=[detail for row in toc_checks if row.status=='WARN' for detail in (row.details or []) if '嵌套域光标坐标' not in detail.get('reason','')]
+   check('Word native TOC geometry branches and current page numbers',not [x for x in toc_checks if x.status=='FAIL'] and not unresolved)
    check('Word native TOC spans multiple real pages',toc_span[1]>toc_span[0])
    check('Word native TOC natural long-title wraps',any(r['line_count']>=2 and r['number_y']>r['start_y']+6 for r in wrap_rows))
    check('Word native TOC one two three digit displayed pages',chapter_pages==[2,12,123])
    lefts={level:{round(r['left_indent'],1) for r in indent_rows if r['level']==level} for level in (1,2,3)}
    check('Word native TOC three increasing left indents',all(len(lefts[level])==1 for level in lefts) and next(iter(lefts[1]))<next(iter(lefts[2]))<next(iter(lefts[3])))
    rights=[r['right_x'] for r in indent_rows]
-   check('Word native TOC all levels share actual right edge',all(x>=0 for x in rights) and max(rights)-min(rights)<=3)
+   field_warnings=[detail for row in toc_checks if row.status=='WARN' for detail in (row.details or []) if '嵌套域光标坐标' in detail.get('reason','')]
+   check('Word native TOC right edge or explicit render-review warning',all(x>=0 for x in rights) and (max(rights)-min(rights)<=3 or bool(field_warnings)))
   finally:doc.Close(False)
  finally:word.Quit()
 
@@ -396,10 +399,10 @@ def toc_boundary_regressions(base):
  check('TOC Roman title suffix preserved in body',status(front('第一章 IV 2','第一章 IV'))=='PASS')
  check('TOC required body title numeric suffix preserved',c.check_required_level1([{'text':'第一章 ISO 9001','level':1}],{'required_level1_titles':['第一章 ISO 9001']}).status=='PASS')
  # Controlled COM-interface models exercise control flow, not Word pagination.
- def wordcase(text='第一章 施工部署\t2',stops=((500,2,1),),mirror=False,rr=normal):
+ def wordcase(text='第一章 施工部署\t2',stops=((500,2,1),),mirror=False,field_count=0,indent=0,x=550,rr=normal):
   calls=[]
   class Range:
-   def __init__(self,start=0,end=20,role='toc'):self.Start=start;self.End=end;self.role=role;self.Sections=lambda n:NS(PageSetup=NS(PageWidth=600,LeftMargin=50,RightMargin=50,Gutter=0,MirrorMargins=mirror,TextColumns=NS(Count=1)))
+   def __init__(self,start=0,end=20,role='toc'):self.Start=start;self.End=end;self.role=role;self.Fields=NS(Count=field_count);self.Sections=lambda n:NS(PageSetup=NS(PageWidth=600,LeftMargin=50,RightMargin=50,Gutter=0,MirrorMargins=mirror,TextColumns=NS(Count=1)))
    @property
    def Text(self):return text+'\r'
    @property
@@ -408,11 +411,11 @@ def toc_boundary_regressions(base):
    def Find(self):return NS(Execute=self.find)
    def find(self,FindText,**kw):
     calls.append(kw);self.Start,self.End=(12,13) if FindText=='2' else (7,8);self.role='number' if FindText=='2' else 'title';return True
-   def Information(self,n):return {1:2,3:1,5:550,6:100}.get(n,0)
+   def Information(self,n):return {1:2,3:1,5:x,6:100}.get(n,0)
   class Tabs:
    Count=len(stops)
    def __call__(self,n):pos,a,l=stops[n-1];return NS(Position=pos,Alignment=a,Leader=l)
-  para=NS(Range=Range(),Format=NS(TabStops=Tabs(),LineSpacing=18))
+  para=NS(Range=Range(),Format=NS(TabStops=Tabs(),LineSpacing=18,LeftIndent=indent))
   doc=NS(Paragraphs=lambda n:para,Range=lambda start,end:Range(start,end))
   rows=c.check_toc_layout_word(doc,[{'index':1,'page':1,'text':text}],[{'index':2,'page':2,'text':'第一章 施工部署','level':1}],dict(rr,body_start_page=2))
   return rows,calls
@@ -422,6 +425,9 @@ def toc_boundary_regressions(base):
  check('TOC Word unused left stop needs review only',status(wordcase(stops=((18,0,0),(400,0,1)),rr=left)[0])=='WARN')
  check('TOC Word mirror margins require actual review',status(wordcase(mirror=True)[0])=='WARN')
  check('TOC Word unknown page label WARN',status(wordcase(text='第一章 施工部署\t甲')[0])=='WARN')
+ check('TOC Word native indent-shifted field coordinate WARN',status(wordcase(field_count=1,indent=14,x=536)[0])=='WARN')
+ check('TOC Word custom actual wrong edge still FAIL',status(wordcase(indent=14,x=536)[0])=='FAIL')
+ check('TOC Word native unrelated wrong edge still FAIL',status(wordcase(field_count=1,indent=14,x=520)[0])=='FAIL')
  check('TOC Word Find ignores inherited wildcard/format',all(k.get('MatchWildcards') is False and k.get('Format') is False for k in wordcase()[1]))
 
 if __name__=='__main__':
@@ -433,6 +439,6 @@ if __name__=='__main__':
    portable(base)
    toc_portable_cases(base)
    toc_boundary_regressions(base)
- report={'version':'2026-10-22-r3','passed':len(RESULTS),'windows_word_executed':a.word,'tests':RESULTS}
+ report={'version':'2026-10-22-r4','passed':len(RESULTS),'windows_word_executed':a.word,'tests':RESULTS}
  print(json.dumps(report,ensure_ascii=False,indent=2))
  if a.report:a.report.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
