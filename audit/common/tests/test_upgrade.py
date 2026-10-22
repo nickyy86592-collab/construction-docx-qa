@@ -129,33 +129,30 @@ def word_suite(base):
   # Keep evidence outside TemporaryDirectory so exported pages remain reviewable.
   import os
   from dataclasses import asdict
-  from docx import Document
-  from docx.enum.section import WD_SECTION
-  from docx.shared import Pt
   native=Path(os.environ.get('WORD_TOC_EVIDENCE_DIR',str(Path.cwd()/'word-toc-evidence'))).resolve()
   native.mkdir(parents=True,exist_ok=True)
   seed=native/'native-toc.seed.docx';saved=native/'native-toc.saved.docx'
-  d=Document();d.sections[0].page_width=Pt(595.3);d.sections[0].page_height=Pt(841.9)
-  for section in d.sections:
-   section.left_margin=section.right_margin=Pt(56.7)
-   section.top_margin=section.bottom_margin=Pt(56.7)
-  d.add_paragraph('项目名称：原生自动目录真实Word集成样例')
-  d.add_paragraph('目录')
-  marker='NATIVE_TOC_INSERT_HERE';d.add_paragraph(marker)
-  chapter_titles=[]
-  # Each chapter contributes all three levels. Long titles force natural wraps;
-  # sufficient entries force the TOC onto multiple pages without manual breaks.
+  chapter_titles=[];native_paragraphs=[]
+  section_xml='<w:sectPr><w:type w:val="nextPage"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr>'
+  def native_para(text,level=None):
+   props=('<w:pPr><w:outlineLvl w:val="'+str(level-1)+'"/></w:pPr>') if level else ''
+   native_paragraphs.append('<w:p>'+props+'<w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>'+escape(text)+'</w:t></w:r></w:p>')
+  native_para('项目名称：原生自动目录真实Word集成样例');native_para('目录')
+  marker='NATIVE_TOC_INSERT_HERE';native_para(marker)
+  # Standard-library OOXML seed avoids adding runtime dependencies to Word runner.
   for chapter in range(1,21):
-   if chapter<=3:d.add_section(WD_SECTION.NEW_PAGE)
-   suffix='复杂条件下施工工序与资源接口的统筹安排及质量安全检验控制要求'
-   title=f'第{chapter}章 '+suffix*3
-   chapter_titles.append(title);d.add_heading(title,1)
-   d.add_paragraph('完成材料报审及工作面核验后组织作业，检查合格后移交。')
-   d.add_heading('第一节 施工准备及跨专业资源接口检查',2)
-   d.add_paragraph('结合现场工作面条件组织工序交接。')
-   d.add_heading('一、过程检查与验收记录',3)
-   d.add_paragraph('施工完成后按批准方案进行复查并形成验收记录。')
-  d.save(seed)
+   if chapter<=3:native_paragraphs.append('<w:p><w:pPr>'+section_xml+'</w:pPr></w:p>')
+   title=f'第{chapter}章 '+('复杂条件下施工工序与资源接口的统筹安排及质量安全检验控制要求'*3)
+   chapter_titles.append(title);native_para(title,1)
+   native_para('完成材料报审及工作面核验后组织作业，检查合格后移交。')
+   native_para('第一节 施工准备及跨专业资源接口检查',2)
+   native_para('结合现场工作面条件组织工序交接。')
+   native_para('一、过程检查与验收记录',3)
+   native_para('施工完成后按批准方案进行复查并形成验收记录。')
+  with zipfile.ZipFile(seed,'w',zipfile.ZIP_DEFLATED) as z:
+   z.writestr('[Content_Types].xml','<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>')
+   z.writestr('_rels/.rels','<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')
+   z.writestr('word/document.xml','<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+''.join(native_paragraphs)+section_xml+'</w:body></w:document>')
   doc=word.Documents.Open(str(seed),ReadOnly=False,AddToRecentFiles=False)
   try:
    # Restart displayed page numbers in body sections: physically short fixture,
