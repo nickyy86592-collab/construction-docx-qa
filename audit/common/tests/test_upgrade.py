@@ -214,17 +214,17 @@ def word_suite(base):
    toc_checks=c.check_toc_layout_word(doc,records,headings,rules)
    wrap_rows=[];indent_rows=[]
    for rec in toc_entries:
-    p=doc.Paragraphs(rec['index']);raw=c.clean_text(p.Range.Text)
+    p=doc.Paragraphs(rec['index']);entry=c.paragraph_text_range(doc,rec['index']);raw=c.clean_text(entry.Text)
     token=c.TOC_PAGE_RE.search(raw)
     if not token:raise AssertionError('native TOC entry has no page-number token')
-    number=p.Range.Duplicate
+    number=entry.Duplicate
     if not number.Find.Execute(token[1],True,False,False,False,False,False,0,False):
      raise AssertionError('native TOC page token cannot be measured')
-    doc.ActiveWindow.ScrollIntoView(p.Range,True)
-    first=doc.Range(int(p.Range.Start),int(p.Range.Start));last=doc.Range(int(number.End),int(number.End))
+    doc.ActiveWindow.ScrollIntoView(entry,True)
+    first=doc.Range(int(entry.Start),int(entry.Start));last=doc.Range(int(number.End),int(number.End))
     level=c.classify_heading(c.normalize_toc_title(rec['text']))[0]
     wrap_rows.append({'paragraph':rec['index'],'start_y':float(first.Information(6)),
-                     'number_y':float(number.Information(6)),'line_count':int(p.Range.ComputeStatistics(1))})
+                     'number_y':float(number.Information(6)),'line_count':int(entry.ComputeStatistics(1))})
     indent_rows.append({'level':level,'left_indent':float(p.Format.LeftIndent),'right_x':float(last.Information(5))})
    chapter_pages=[]
    for title in chapter_titles[:3]:
@@ -398,6 +398,14 @@ def toc_boundary_regressions(base):
  check('TOC hidden numeric title suffix preserved',status(front('第一章 ISO 9001','第一章 ISO 9001',hidden))=='PASS')
  check('TOC Roman title suffix preserved in body',status(front('第一章 IV 2','第一章 IV'))=='PASS')
  check('TOC required body title numeric suffix preserved',c.check_required_level1([{'text':'第一章 ISO 9001','level':1}],{'required_level1_titles':['第一章 ISO 9001']}).status=='PASS')
+ # First native TOC paragraph may otherwise include the entire outer field.
+ class OuterFields:
+  Count=1
+  def __call__(self,n):return NS(Type=13,Result=NS(Start=45))
+ original=NS(Start=10,End=999,Fields=OuterFields())
+ bounded=NS(Paragraphs=lambda n:NS(Range=original if n==1 else NS(Start=160)),Range=lambda a,b:NS(Start=a,End=b))
+ rr=c.paragraph_text_range(bounded,1)
+ check('TOC first native paragraph excludes outer code and later entries',(rr.Start,rr.End)==(45,160))
  # Controlled COM-interface models exercise control flow, not Word pagination.
  def wordcase(text='第一章 施工部署\t2',stops=((500,2,1),),mirror=False,field_count=0,indent=0,x=550,rr=normal):
   calls=[]
@@ -440,6 +448,6 @@ if __name__=='__main__':
    portable(base)
    toc_portable_cases(base)
    toc_boundary_regressions(base)
- report={'version':'2026-10-22-r5','passed':len(RESULTS),'windows_word_executed':a.word,'tests':RESULTS}
+ report={'version':'2026-10-22-r6','passed':len(RESULTS),'windows_word_executed':a.word,'tests':RESULTS}
  print(json.dumps(report,ensure_ascii=False,indent=2))
  if a.report:a.report.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')

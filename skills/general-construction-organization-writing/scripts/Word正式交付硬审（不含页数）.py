@@ -271,11 +271,32 @@ def iter_find_ranges(doc, find_text: str) -> List[Tuple[int, int, int]]:
     return hits
 
 
+def paragraph_text_range(doc, index):
+    """Keep native TOC's first paragraph inside its visible result, not the outer field."""
+    original=doc.Paragraphs(index).Range
+    start,end=int(original.Start),int(original.End)
+    try:
+        fields=original.Fields
+        for n in range(1,int(fields.Count)+1):
+            field=fields(n)
+            if int(field.Type)==13:  # wdFieldTOC
+                start=max(start,int(field.Result.Start))
+                break
+    except Exception:pass
+    try:
+        following=int(doc.Paragraphs(index+1).Range.Start)
+        if start<following<end:end=following
+    except Exception:pass
+    if start!=int(original.Start) or end!=int(original.End):return doc.Range(start,end)
+    return original.Duplicate
+
+
 def get_paragraph_records(doc) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
     for i in range(1, int(doc.Paragraphs.Count) + 1):
         p = doc.Paragraphs(i)
-        text = normalize_spaces(p.Range.Text)
+        text_range = paragraph_text_range(doc, i)
+        text = normalize_spaces(text_range.Text)
         if not text:
             continue
         try:
@@ -289,11 +310,11 @@ def get_paragraph_records(doc) -> List[Dict[str, Any]]:
         rec = {
             "index": i,
             "text": text,
-            "page": page_of_range(p.Range),
+            "page": page_of_range(text_range),
             "outline": outline,
             "page_break_before": page_break_before,
-            "start": int(p.Range.Start),
-            "end": int(p.Range.End),
+            "start": int(text_range.Start),
+            "end": int(text_range.End),
         }
         records.append(rec)
     return records
@@ -534,7 +555,7 @@ def check_toc_layout_word(doc, records, headings, rules):
     for i,rec in enumerate(entries):
         detail={'paragraph':rec['index'],'page':rec['page'],'text':rec['text'][:160]}
         try:
-            p=doc.Paragraphs(rec['index']);raw=clean_text(p.Range.Text);m=TOC_PAGE_RE.search(raw)
+            p=doc.Paragraphs(rec['index']);entry=paragraph_text_range(doc,rec['index']);raw=clean_text(entry.Text);m=TOC_PAGE_RE.search(raw)
             if not cfg['show_page_numbers']:
                 if re.search(r'\t\s*(?:\d+|[ivxlcdmIVXLCDM]+)\s*$',raw):
                     failures.append({**detail,'reason':'有效项目规则要求不显示目录页码，实际仍有页码'})
@@ -561,7 +582,7 @@ def check_toc_layout_word(doc, records, headings, rules):
             if not cfg['right_align'] and len(matched)>1:
                 warnings.append({**detail,'reason':'非右对齐例外存在多个制表位，须确认页码实际使用的引导符'})
             # Positional COM arguments keep backward/stop/format flags effective.
-            number=p.Range.Duplicate
+            number=entry.Duplicate
             if not number.Find.Execute(token,True,False,False,False,False,False,0,False):
                 warnings.append({**detail,'reason':'Word无法定位页码字符'});continue
             try:doc.ActiveWindow.ScrollIntoView(number,True)
@@ -581,7 +602,7 @@ def check_toc_layout_word(doc, records, headings, rules):
                     warnings.append({**detail,'reason':'原生目录嵌套域光标坐标疑似受左缩进影响，须按实际渲染核实右边界','actual_x_pt':x,'expected_x_pt':right,'left_indent_pt':indent})
                 else:
                     failures.append({**detail,'reason':'页码实际右边界未对齐或超出版心','actual_x_pt':x,'expected_x_pt':right})
-            before=doc.Range(int(p.Range.Start),int(number.Start));title=raw.rsplit('\t',1)[0].rstrip()
+            before=doc.Range(int(entry.Start),int(number.Start));title=raw.rsplit('\t',1)[0].rstrip()
             if title and before.Find.Execute(title[-1],True,False,False,False,False,False,0,False):
                 y1=float(before.Information(6));y2=float(number.Information(6))
                 if page_of_range(before)!=page_of_range(number):
@@ -1661,7 +1682,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         overall = "PASS" if not hard_failures else "FAIL"
 
         report = {
-            "audit_version": "1.8.3",
+            "audit_version": "1.8.4",
             "rules_sha256": rules_digest(rules),
             "photo_delivery_stage": rules.get("photo_delivery_stage"),
             "layout_engine": "Microsoft Word",
@@ -1897,7 +1918,7 @@ def static_audit(document, rules_path, report_path,page_dir=None):
     rules = load_rules(rules_path,page_dir)
     results = portable_checks(document, rules)
     overall = 'FAIL' if any(x.status=='FAIL' for x in results) else 'PASS'
-    report = {'audit_version':'1.8.3', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
+    report = {'audit_version':'1.8.4', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
               'rules_sha256':rules_digest(rules), 'photo_delivery_stage':rules.get('photo_delivery_stage'),
               'delivery_status':overall, 'checks':[asdict(x) for x in results],
               'notes':['静态核验不使用Word，不能证明实际页数、版式、照片真实性或技术参数正确。']}
