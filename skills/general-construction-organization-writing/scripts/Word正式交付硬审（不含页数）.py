@@ -560,8 +560,9 @@ def check_toc_layout_word(doc, records, headings, rules):
                 failures.append({**detail,'reason':'Word有效制表位、右对齐或引导符配置不符','tabs':tabs,'target_pt':target});continue
             if not cfg['right_align'] and len(matched)>1:
                 warnings.append({**detail,'reason':'非右对齐例外存在多个制表位，须确认页码实际使用的引导符'})
+            # Positional COM arguments keep backward/stop/format flags effective.
             number=p.Range.Duplicate
-            if not number.Find.Execute(FindText=token,Forward=False,Wrap=0,MatchWildcards=False,MatchCase=True,MatchWholeWord=False,Format=False):
+            if not number.Find.Execute(token,True,False,False,False,False,False,0,False):
                 warnings.append({**detail,'reason':'Word无法定位页码字符'});continue
             try:doc.ActiveWindow.ScrollIntoView(number,True)
             except Exception:pass
@@ -581,7 +582,7 @@ def check_toc_layout_word(doc, records, headings, rules):
                 else:
                     failures.append({**detail,'reason':'页码实际右边界未对齐或超出版心','actual_x_pt':x,'expected_x_pt':right})
             before=doc.Range(int(p.Range.Start),int(number.Start));title=raw.rsplit('\t',1)[0].rstrip()
-            if title and before.Find.Execute(FindText=title[-1],Forward=False,Wrap=0,MatchWildcards=False,MatchCase=True,MatchWholeWord=False,Format=False):
+            if title and before.Find.Execute(title[-1],True,False,False,False,False,False,0,False):
                 y1=float(before.Information(6));y2=float(number.Information(6))
                 if page_of_range(before)!=page_of_range(number):
                     failures.append({**detail,'reason':'页码与标题末行分在不同页'})
@@ -1660,7 +1661,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         overall = "PASS" if not hard_failures else "FAIL"
 
         report = {
-            "audit_version": "1.8.2",
+            "audit_version": "1.8.3",
             "rules_sha256": rules_digest(rules),
             "photo_delivery_stage": rules.get("photo_delivery_stage"),
             "layout_engine": "Microsoft Word",
@@ -1896,7 +1897,7 @@ def static_audit(document, rules_path, report_path,page_dir=None):
     rules = load_rules(rules_path,page_dir)
     results = portable_checks(document, rules)
     overall = 'FAIL' if any(x.status=='FAIL' for x in results) else 'PASS'
-    report = {'audit_version':'1.8.2', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
+    report = {'audit_version':'1.8.3', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
               'rules_sha256':rules_digest(rules), 'photo_delivery_stage':rules.get('photo_delivery_stage'),
               'delivery_status':overall, 'checks':[asdict(x) for x in results],
               'notes':['静态核验不使用Word，不能证明实际页数、版式、照片真实性或技术参数正确。']}

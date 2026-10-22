@@ -218,7 +218,7 @@ def word_suite(base):
     token=c.TOC_PAGE_RE.search(raw)
     if not token:raise AssertionError('native TOC entry has no page-number token')
     number=p.Range.Duplicate
-    if not number.Find.Execute(FindText=token[1],Forward=False,Wrap=0,MatchWildcards=False,MatchWholeWord=False,Format=False):
+    if not number.Find.Execute(token[1],True,False,False,False,False,False,0,False):
      raise AssertionError('native TOC page token cannot be measured')
     doc.ActiveWindow.ScrollIntoView(p.Range,True)
     first=doc.Range(int(p.Range.Start),int(p.Range.Start));last=doc.Range(int(number.End),int(number.End))
@@ -350,7 +350,7 @@ def toc_portable_cases(base):
    def Duplicate(self):return Range(self.Start,self.End)
    @property
    def Find(self):return NS(Execute=self.find)
-   def find(self,FindText,**kw):
+   def find(self,FindText,*args,**kw):
     self.Start,self.End=(12,13) if FindText=='2' else (7,8);self.role='number' if FindText=='2' else 'title';return True
    def Information(self,n):
     return {1:actual,3:1,5:x,6:number_y if self.role=='number' else title_y}.get(n,0)
@@ -409,8 +409,8 @@ def toc_boundary_regressions(base):
    def Duplicate(self):return Range(self.Start,self.End)
    @property
    def Find(self):return NS(Execute=self.find)
-   def find(self,FindText,**kw):
-    calls.append(kw);self.Start,self.End=(12,13) if FindText=='2' else (7,8);self.role='number' if FindText=='2' else 'title';return True
+   def find(self,FindText,*args,**kw):
+    calls.append(dict(kw,positional=args));self.Start,self.End=(12,13) if FindText=='2' else (7,8);self.role='number' if FindText=='2' else 'title';return True
    def Information(self,n):return {1:2,3:1,5:x,6:100}.get(n,0)
   class Tabs:
    Count=len(stops)
@@ -428,7 +428,8 @@ def toc_boundary_regressions(base):
  check('TOC Word native indent-shifted field coordinate WARN',status(wordcase(field_count=1,indent=14,x=536)[0])=='WARN')
  check('TOC Word custom actual wrong edge still FAIL',status(wordcase(indent=14,x=536)[0])=='FAIL')
  check('TOC Word native unrelated wrong edge still FAIL',status(wordcase(field_count=1,indent=14,x=520)[0])=='FAIL')
- check('TOC Word Find ignores inherited wildcard/format',all(k.get('MatchWildcards') is False and k.get('Format') is False for k in wordcase()[1]))
+ check('TOC Word Find explicitly searches backward and stops in range',all(k['positional'][5] is False and k['positional'][6]==0 for k in wordcase()[1]))
+ check('TOC Word Find ignores inherited wildcard/format',all(k['positional'][2] is False and k['positional'][7] is False for k in wordcase()[1]))
 
 if __name__=='__main__':
  p=argparse.ArgumentParser();p.add_argument('--word',action='store_true');p.add_argument('--report',type=Path);a=p.parse_args()
@@ -439,6 +440,6 @@ if __name__=='__main__':
    portable(base)
    toc_portable_cases(base)
    toc_boundary_regressions(base)
- report={'version':'2026-10-22-r4','passed':len(RESULTS),'windows_word_executed':a.word,'tests':RESULTS}
+ report={'version':'2026-10-22-r5','passed':len(RESULTS),'windows_word_executed':a.word,'tests':RESULTS}
  print(json.dumps(report,ensure_ascii=False,indent=2))
  if a.report:a.report.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
