@@ -1,0 +1,13 @@
+interface:
+  display_name: 通用施组编制（油罐）
+  short_description: 通用施工组织设计编制：自动读取项目页数脚本，执行内容规划、长文试排、图文与溯源门禁
+  default_prompt: 使用 $general-construction-organization-writing，基于当前项目资料编制施组；自动读取唯一项目页数脚本，执行启动质询、内容模块与篇幅规划、长文早期Word试排及模块保存、彩色三图、实景图及Word交付审核。
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  allow_implicit_invocation: true
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
