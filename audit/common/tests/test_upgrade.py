@@ -155,6 +155,11 @@ def word_suite(base):
    z.writestr('word/document.xml','<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+''.join(native_paragraphs)+section_xml+'</w:body></w:document>')
   doc=word.Documents.Open(str(seed),ReadOnly=False,AddToRecentFiles=False)
   try:
+   # Bind actual built-in heading styles before creating native TOC.
+   for paragraph_index in range(1,int(doc.Paragraphs.Count)+1):
+    paragraph=doc.Paragraphs(paragraph_index);level=int(paragraph.OutlineLevel)
+    if level in (1,2,3):
+     paragraph.Range.Style=doc.Styles(-level);paragraph.Range.Font.Size=12
    # Restart displayed page numbers in body sections: physically short fixture,
    # genuine one-, two-, and three-digit PAGEREF results (2, 12, 123).
    for section_index,start_number in ((2,2),(3,12),(4,123)):
@@ -165,9 +170,8 @@ def word_suite(base):
    if not anchor.Find.Execute(FindText=marker,Forward=True,Wrap=0,MatchWildcards=False,Format=False):
     raise AssertionError('native TOC insertion marker absent')
    anchor.Text='';anchor.Collapse(1)
-   toc=doc.TablesOfContents.Add(Range=anchor,UseHeadingStyles=True,UpperHeadingLevel=1,LowerHeadingLevel=3,
-       UseFields=False,RightAlignPageNumbers=True,IncludePageNumbers=True,UseHyperlinks=True,
-       HidePageNumbersInWeb=False,UseOutlineLevels=True)
+   # Positional arguments follow Word's complete Add signature (late-bound COM).
+   toc=doc.TablesOfContents.Add(anchor,True,1,3,False,'',True,True,'',True,False,True)
    toc.TabLeader=1
    setup=doc.Sections(1).PageSetup
    width=float(setup.PageWidth)-float(setup.LeftMargin)-float(setup.RightMargin)
