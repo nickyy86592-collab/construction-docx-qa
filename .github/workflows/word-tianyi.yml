@@ -1,0 +1,105 @@
+name: Tianyi Word measurement
+on:
+  push:
+    branches: [main]
+    paths: ['input/tianyi/request.json']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: word-tianyi
+  cancel-in-progress: false
+jobs:
+  inputs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare pinned transport and project payload
+        shell: python
+        run: |
+          import urllib.request,zipfile,io,hashlib,json
+          from pathlib import Path
+          pin='ea165f8d65b6e75b540449e92b4886f43607fa02'
+          with urllib.request.urlopen('https://api.github.com/repos/actions/upload-artifact/zipball/'+pin,timeout=60) as r: raw=r.read()
+          manifest={}
+          with zipfile.ZipFile(io.BytesIO(raw)) as z:
+              for name in ['action.yml','dist/upload/index.js']:
+                  found=[x for x in z.namelist() if '/'.join(x.split('/')[1:])==name]
+                  assert len(found)==1
+                  p=Path('upload-action')/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(z.read(found[0]))
+                  manifest[str(p)]=hashlib.sha256(p.read_bytes()).hexdigest()
+          Path('transport-manifest.json').write_text(json.dumps(manifest))
+          request=json.loads(Path('input/tianyi/request.json').read_text('utf-8'))
+          if request['mode']!='probe':
+              with urllib.request.urlopen(request['download_url'],timeout=90) as r: payload=r.read()
+              assert hashlib.sha256(payload).hexdigest()==request['payload_sha256']
+              Path('payload.zip').write_bytes(payload)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tianyi-input-${{ github.run_id }}
+          path: |
+            input/tianyi/request.json
+            audit/common/prepare_python.ps1
+            upload-action/
+            transport-manifest.json
+            payload.zip
+  word:
+    needs: inputs
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 20
+    steps:
+      - name: Retrieve immutable input and run Microsoft Word
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
+          Set-Location $env:GITHUB_WORKSPACE
+          $root=Join-Path $env:GITHUB_WORKSPACE "tianyi-$env:GITHUB_RUN_ID"
+          New-Item -ItemType Directory -Force $root | Out-Null
+          $headers=@{Authorization="Bearer $env:GH_TOKEN";Accept='application/vnd.github+json'}
+          $list=Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/artifacts" -Headers $headers
+          $item=$list.artifacts | Where-Object {$_.name -eq "tianyi-input-$env:GITHUB_RUN_ID"} | Select-Object -First 1
+          if ($null -eq $item) {throw 'Input artifact missing'}
+          $zip=Join-Path $root 'stage.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri $item.archive_download_url -Headers $headers -OutFile $zip -TimeoutSec 90
+          Expand-Archive -LiteralPath $zip -DestinationPath $root -Force
+          $manifest=Get-Content -Raw -Encoding UTF8 (Join-Path $root 'transport-manifest.json') | ConvertFrom-Json
+          foreach($entry in $manifest.PSObject.Properties){
+            if((Get-FileHash (Join-Path $root $entry.Name) -Algorithm SHA256).Hash.ToLower() -ne $entry.Value){throw 'Transport integrity mismatch'}
+          }
+          Copy-Item -Recurse -Force (Join-Path $root 'upload-action') (Join-Path $env:GITHUB_WORKSPACE '_tianyi_upload')
+          & (Join-Path $root 'audit/common/prepare_python.ps1')
+          New-Item -ItemType Directory -Force (Join-Path $root 'output') | Out-Null
+          $request=Get-Content -Raw -Encoding UTF8 (Join-Path $root 'input/tianyi/request.json') | ConvertFrom-Json
+          if($request.mode -eq 'probe'){
+            $env:TIANYI_ROOT=$root
+            @'
+          import os,json,win32com.client
+          from pathlib import Path
+          w=win32com.client.DispatchEx('Word.Application');w.Visible=False;w.DisplayAlerts=0
+          d=None
+          try:
+              d=w.Documents.Add();d.Content.Text='Tianyi Microsoft Word channel';d.Repaginate()
+              result={'status':'PASS','page_source':'microsoft_word','word_version':str(w.Version),'pages':int(d.ComputeStatistics(2)),'run_id':os.environ['GITHUB_RUN_ID']}
+              (Path(os.environ['TIANYI_ROOT'])/'output/probe.json').write_text(json.dumps(result),'utf-8')
+              print(json.dumps(result),flush=True)
+          finally:
+              if d is not None:d.Close(False)
+              w.Quit()
+          '@ | & $env:AUDIT_PYTHON -
+          } else {
+            $hash=(Get-FileHash (Join-Path $root 'payload.zip') -Algorithm SHA256).Hash.ToLower()
+            if($hash -ne $request.payload_sha256){throw 'Payload integrity mismatch'}
+            Expand-Archive -LiteralPath (Join-Path $root 'payload.zip') -DestinationPath (Join-Path $root 'payload') -Force
+            & $env:AUDIT_PYTHON (Join-Path $root 'payload/word_job.py') --request (Join-Path $root 'input/tianyi/request.json') --root (Join-Path $root 'payload') --output (Join-Path $root 'output')
+          }
+          if($LASTEXITCODE -ne 0){throw 'Word execution failed'}
+      - name: Retain Word evidence
+        uses: ./_tianyi_upload
+        if: always()
+        with:
+          name: word-tianyi-${{ github.run_id }}
+          path: tianyi-${{ github.run_id }}/output/
+          if-no-files-found: warn
