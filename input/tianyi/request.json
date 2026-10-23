@@ -1,9 +1,9 @@
 {
   "mode": "measure",
-  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-4c8c-81fa-a29d-c27379ae493c/raw?se=2026-10-23T07%3A03%3A33Z&sp=r&sv=2026-02-06&sr=b&scid=01a16770-5f12-7252-bbd2-1d1ee8e58b58&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-23T00%3A25%3A51Z&ske=2026-10-24T00%3A25%3A51Z&sks=b&skv=2026-02-06&sig=NbjgVn5mdq%2BmTFWWDBGu7qb9R6mB69qjzMUZEr7Sx%2BI%3D",
-  "payload_sha256": "3c1964a5c972b87e8513dcd12427c9621f03338bff20364412cc70f946509875",
+  "download_url": "https://sdmntprsoutheastus3.oaiusercontent.com/files/00000000-3fcc-820c-9a35-7a96678eff80/raw?se=2026-10-23T07%3A18%3A20Z&sp=r&sv=2026-02-06&sr=b&scid=01a16770-5f12-7252-bbd2-1d1ee8e58b58&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-23T03%3A13%3A44Z&ske=2026-10-24T03%3A13%3A44Z&sks=b&skv=2026-02-06&sig=3g9I3FlGLlx1ZignbNPNRCwwil1Y1vGzSnQkMe6EJWo%3D",
+  "payload_sha256": "4220f3abac1c1f4de4aa493188e4990aab2f8bf26dd213873941ce07f6773af9",
   "document": "design.docx",
-  "stage_percent": 40,
+  "stage_percent": 75,
   "update_fields": true,
   "format_audit": false,
   "page_audit": false
