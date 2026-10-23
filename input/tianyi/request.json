@@ -1,7 +1,7 @@
 {
   "mode": "measure",
   "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-bac0-81fa-9bf6-64bd5b2495fd/raw?se=2026-10-23T06%3A55%3A45Z&sp=r&sv=2026-02-06&sr=b&scid=01a16770-5f12-7252-bbd2-1d1ee8e58b58&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-23T02%3A42%3A59Z&ske=2026-10-24T02%3A42%3A59Z&sks=b&skv=2026-02-06&sig=tmEgIQxS%2B4bmzx9h2naHM6dmZyLpL9sxPxAZNZJmY2c%3D",
-  "payload_sha256": "e1d833b524d9a9685ba3c21b60ae12fa8c36759c4bf24e531d7c9b891a8bb7cf",
+  "payload_sha256": "c1239ac2a564c74ce48154b120891a5c77a82cd37453f50e0fe68f3ea7355301",
   "document": "design.docx",
   "stage_percent": 40,
   "update_fields": true,
