@@ -1,0 +1,57 @@
+name: Stage verified construction runner upgrade
+on:
+  push:
+    paths:
+      - '.github/workflows/runner-upgrade-stage.yml'
+      - 'automation/runner-upgrade/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  official-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact official package and verify its published checksum
+        shell: bash
+        run: |
+          mkdir -p runner-upgrade-bundle
+          curl --fail --location --connect-timeout 20 --max-time 300 --retry 2 --output runner-upgrade-bundle/runner.zip https://github.com/actions/runner/releases/download/v2.338.0/actions-runner-win-x64-2.338.0.zip
+          echo 'f48e0750a21812bca5f82de5f7f5aeae71abee647fab5a582f1742d07eba455f  runner-upgrade-bundle/runner.zip' | sha256sum --check -
+          cp automation/runner-upgrade/Apply-ConstructionRunnerUpgrade.ps1 runner-upgrade-bundle/
+          cp automation/runner-upgrade/Stage-ConstructionRunnerUpgrade.ps1 runner-upgrade-bundle/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: official-construction-runner-2.338.0
+          path: runner-upgrade-bundle/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+  stage-on-construction-pc:
+    needs: official-package
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 12
+    steps:
+      - name: Retrieve through artifact channel, verify, and prepare offline updater
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -File {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
+          if($env:GITHUB_REPOSITORY -ne 'nickyy86592-collab/construction-docx-qa'){throw 'Repository mismatch'}
+          if($env:RUNNER_NAME -ne 'DESKTOP-0472OML-word'){throw 'Runner mismatch'}
+          $headers=@{Authorization="Bearer $env:GH_TOKEN";Accept='application/vnd.github+json'}
+          $url="https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/artifacts"
+          $list=Invoke-RestMethod -Uri $url -Headers $headers -TimeoutSec 45
+          $artifact=@($list.artifacts | Where-Object {$_.name -eq 'official-construction-runner-2.338.0'})
+          if($artifact.Count -ne 1){throw 'Expected one verified official package artifact'}
+          $root=Join-Path $env:RUNNER_TEMP "construction-runner-upgrade-$env:GITHUB_RUN_ID"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $bundle=Join-Path $root 'bundle.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri $artifact[0].archive_download_url -Headers $headers -OutFile $bundle -TimeoutSec 240
+          Expand-Archive -LiteralPath $bundle -DestinationPath $root -Force
+          & (Join-Path $root 'Stage-ConstructionRunnerUpgrade.ps1')
+          if($LASTEXITCODE -and $LASTEXITCODE -ne 0){throw 'Runner upgrade staging failed'}
