@@ -1,0 +1,63 @@
+name: Construction runner upgrade diagnostics
+on:
+  push:
+    paths:
+      - '.github/workflows/runner-upgrade-check.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 8
+    steps:
+      - name: Inspect only this construction runner and its update download
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -File {0}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REPOSITORY -ne 'nickyy86592-collab/construction-docx-qa') { throw 'Unexpected repository' }
+          $probe = Get-CimInstance Win32_Process -Filter "ProcessId=$PID"
+          $worker = $null
+          for ($i=0; $i -lt 12 -and $null -ne $probe; $i++) {
+            if ($probe.Name -eq 'Runner.Worker.exe') { $worker=$probe; break }
+            $parentId = [int]$probe.ParentProcessId
+            if ($parentId -le 0) { break }
+            $probe = Get-CimInstance Win32_Process -Filter "ProcessId=$parentId"
+          }
+          if ($null -eq $worker -or -not $worker.ExecutablePath) { throw 'Cannot determine owned runner path' }
+          $runnerRoot = Split-Path (Split-Path $worker.ExecutablePath -Parent) -Parent
+          $registration = Get-Content -Raw -LiteralPath (Join-Path $runnerRoot '.runner') | ConvertFrom-Json
+          if ($registration.gitHubUrl.TrimEnd('/') -ne 'https://github.com/nickyy86592-collab/construction-docx-qa') { throw 'Registration scope mismatch' }
+          Write-Host "RUNNER_NAME=$env:RUNNER_NAME"
+          Write-Host "RUNNER_ROOT=$runnerRoot"
+          Write-Host "REGISTRATION_URL=$($registration.gitHubUrl)"
+          $listener = Join-Path $runnerRoot 'bin/Runner.Listener.exe'
+          & $listener --version
+          Write-Host 'UPDATE_ERRORS_BEGIN'
+          $logs = Get-ChildItem -LiteralPath (Join-Path $runnerRoot '_diag') -File |
+            Where-Object { $_.Name -like 'Runner_*.log' -or $_.Name -like 'SelfUpdate*' } |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 5
+          $matches = foreach ($log in $logs) {
+            Get-Content -LiteralPath $log.FullName -Tail 3000 |
+              Where-Object { $_ -match 'SelfUpdater|download attempts|TaskCanceledException|HttpRequestException|timed out|SSL|certificate|remote name|Unable to connect|actively refused' } |
+              Where-Object { $_ -notmatch '(?i)authorization|bearer|cookie|credential|token' } |
+              ForEach-Object {
+                $safe = [regex]::Replace($_, 'https?://[^\s"]+', {param($m) ($m.Value -split '\?',2)[0]})
+                if ($safe.Length -gt 800) { $safe=$safe.Substring(0,800) }
+                "$($log.Name): $safe"
+              }
+          }
+          $matches | Select-Object -Last 65 | ForEach-Object { Write-Host $_ }
+          Write-Host 'UPDATE_ERRORS_END'
+          Write-Host 'OFFICIAL_DOWNLOAD_PROBE_BEGIN'
+          $url='https://github.com/actions/runner/releases/download/v2.338.0/actions-runner-win-x64-2.338.0.zip'
+          $curl=Get-Command curl.exe -ErrorAction SilentlyContinue
+          if ($null -ne $curl) {
+            & $curl.Source --head --location --silent --show-error --connect-timeout 12 --max-time 40 --output NUL --write-out 'HTTP_CODE=%{http_code} REMOTE_IP=%{remote_ip} TOTAL_SEC=%{time_total}\n' $url
+            Write-Host "DOWNLOAD_PROBE_EXIT=$LASTEXITCODE"
+            $global:LASTEXITCODE=0
+          } else {
+            Write-Host 'CURL_NOT_AVAILABLE'
+          }
+          Write-Host 'OFFICIAL_DOWNLOAD_PROBE_END'
+          Write-Host 'DIAGNOSTIC_COMPLETE_NO_INSTALLATION_CHANGED'
