@@ -1,9 +1,10 @@
 {
   "mode": "measure",
-  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-4280-81fa-a8d1-58d8cb393813/raw?se=2026-10-23T07%3A49%3A19Z&sp=r&sv=2026-02-06&sr=b&scid=01a167ae-968d-749b-a94f-042f151dc947&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-23T07%3A22%3A22Z&ske=2026-10-24T07%3A22%3A22Z&sks=b&skv=2026-02-06&sig=HBDKDxTItYCKnEjG0IKQwBP%2B81wdEgVSDvo4EAB5Qe8%3D",
-  "payload_sha256": "a253a40842073707b81e3ef0e404f1bd2a0315818ae18f05fc04814d205dd626",
+  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-efe8-81fa-9cf5-af5301599c2d/raw?se=2026-10-30T01%3A37%3A30Z&sp=r&sv=2026-02-06&sr=b&scid=01a18a63-e2ed-71a4-b3e8-3ab99d8b3a3d&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-30T00%3A34%3A00Z&ske=2026-10-31T00%3A34%3A00Z&sks=b&skv=2026-02-06&sig=bFsJlb4gK3Vl%2BAmH4iMAqo%2BcwwuprU0AqbpumpCYY0E%3D",
+  "payload_sha256": "a912fec731142f3d6184f358d019065cb653c60c49a859e15c5c406320dd284e",
   "document": "design.docx",
   "update_fields": true,
-  "format_audit": true,
-  "page_audit": true
+  "format_audit": false,
+  "page_audit": false,
+  "revision": "quality-r1-20261030"
 }
