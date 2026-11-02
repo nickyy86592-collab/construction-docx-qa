@@ -708,9 +708,10 @@ def check_table_layout_static(document,rules):
             if t.findall('.//w:drawing',ns) or t.findall('.//w:pict',ns):
                 warnings.append({**detail,'reason':'含图件/对象的表格须按实际用途复核，不套普通数据表规则'});continue
             counts=[len(r.findall('w:tc',ns)) for r in rows]
-            if not counts or max(counts)<2:
-                if item:warnings.append({**detail,'reason':'单列表须结合用途确认，不机械套用多列数据表规则'})
-                continue
+            if not counts or max(counts)==0:
+                warnings.append({**detail,'reason':'无法可靠识别表格行列，须按实际用途复核'});continue
+            if max(counts)<2 and not item:
+                warnings.append({**detail,'reason':'用途未确认的单列表须由AI分类；不能作为已审数据表通过'});continue
             if t.find('.//w:tbl',ns) is not None or t.find('.//w:gridSpan',ns) is not None or t.find('.//w:hMerge',ns) is not None or t.find('.//w:vMerge',ns) is not None or len(set(counts))!=1:
                 warnings.append({**detail,'reason':'嵌套/合并/不规则表格需Word逐项核查，静态不猜列角色或版心'});continue
             checked+=1;cols=counts[0];roles=item.get('column_roles',[]);header=item.get('header_rows',1)
@@ -783,7 +784,10 @@ def check_table_layout_word(doc,rules):
             if int(t.Range.InlineShapes.Count)>0:
                 warnings.append({**detail,'reason':'图形/照片布局表按实际用途复核'});continue
             cols=int(t.Columns.Count)
-            if cols<2:continue
+            if cols<1:
+                warnings.append({**detail,'reason':'Word未返回可靠列数，须按实际用途复核'});continue
+            if cols<2 and not item:
+                warnings.append({**detail,'reason':'用途未确认的单列表须由AI分类；不能作为已审数据表通过'});continue
             rows=int(t.Rows.Count);roles=item.get('column_roles',[]);header=item.get('header_rows',1)
             if len(roles)!=cols or header>rows:
                 warnings.append({**detail,'reason':'本表列角色/表头范围未可靠配置，须逐表复核'});roles=[]

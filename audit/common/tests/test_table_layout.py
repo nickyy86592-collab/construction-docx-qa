@@ -49,6 +49,20 @@ def fixture(path,mutation=None,many=False):
  if mutation:xml_patch(path,mutation)
  return path
 
+def single_fixture(path,center_body=False,indent=False):
+ from docx import Document
+ from docx.shared import Pt
+ from docx.enum.table import WD_TABLE_ALIGNMENT,WD_CELL_VERTICAL_ALIGNMENT
+ from docx.enum.text import WD_ALIGN_PARAGRAPH
+ d=Document();table=d.add_table(rows=2,cols=1);table.alignment=WD_TABLE_ALIGNMENT.CENTER
+ for ri,text in enumerate(('施工要求','作业前核对工作面与设计接口，按批准工艺组织实施，检验合格后交接。')):
+  cell=table.cell(ri,0);cell.text=text;cell.vertical_alignment=WD_CELL_VERTICAL_ALIGNMENT.CENTER
+  p=cell.paragraphs[0];p.alignment=WD_ALIGN_PARAGRAPH.CENTER if ri==0 or center_body else WD_ALIGN_PARAGRAPH.LEFT
+  pf=p.paragraph_format;pf.left_indent=pf.right_indent=pf.first_line_indent=Pt(0)
+ if indent:table.cell(1,0).paragraphs[0].paragraph_format.first_line_indent=Pt(24)
+ d.save(path);return path
+SINGLE_CFG={'table_layout':{'tables':[{'index':1,'kind':'data','header_rows':1,'column_roles':['long']}]}}
+
 def portable(base):
  def checks(p,cfg=None):return c.check_table_layout_static(p,CFG if cfg is None else cfg)
  def fails(p):return checks(p)[0].status=='FAIL'
@@ -107,6 +121,15 @@ def portable(base):
  override=copy.deepcopy(CFG);override['table_layout'].update(table_alignment='left',source_ref='有效补遗第2条')
  check('explicit tender layout exception accepted',not any(x.status=='FAIL' for x in checks(fixture(base/'exception.docx',tableleft),override)))
  before=good.read_bytes();checks(good);check('audit never edits input DOCX',before==good.read_bytes())
+ single=single_fixture(base/'single-good.docx')
+ result=checks(single,{})
+ check('unknown single-column table requires review',result[0].status=='PASS' and result[1].status=='WARN')
+ result=checks(single,SINGLE_CFG)
+ check('confirmed single-column data table actually checked',result[0].status=='PASS' and result[1].status=='PASS' and result[0].details['checked_tables']==1)
+ result=checks(single_fixture(base/'single-indent.docx',indent=True),SINGLE_CFG)
+ check('single-column data indent blocked',result[0].status=='FAIL')
+ result=checks(single_fixture(base/'single-center.docx',center_body=True),SINGLE_CFG)
+ check('single-column long content centered blocked',result[0].status=='FAIL')
  check('no new production script needed',hasattr(c,'check_table_layout_word'))
 
 def word_suite(base):
@@ -122,6 +145,15 @@ def word_suite(base):
     check('native Word '+name,not bad if name=='good' else bad)
     if name=='good':doc.ExportAsFixedFormat(str(native/'table-good.word.pdf'),17)
     details.append({'fixture':name,'checks':[asdict(x) for x in results]})
+   finally:doc.Close(False)
+  for name,config,expected_fail,expected_review in (
+      ('single-good',SINGLE_CFG,False,True),('single-indent',SINGLE_CFG,True,True),
+      ('single-center',SINGLE_CFG,True,True),('single-good',{},False,True)):
+   doc=word.Documents.Open(str((base/(name+'.docx')).resolve()),ReadOnly=True,AddToRecentFiles=False)
+   try:
+    doc.Repaginate();results=c.check_table_layout_word(doc,config)
+    check('native Word single-column '+name+(' unclassified' if not config else ''),any(x.status=='FAIL' for x in results)==expected_fail and (not expected_review or any(x.status=='WARN' for x in results)))
+    details.append({'fixture':name,'classification':'configured' if config else 'unknown','checks':[asdict(x) for x in results]})
    finally:doc.Close(False)
   many=fixture(native/'multipage.docx',many=True);doc=word.Documents.Open(str(many),ReadOnly=True,AddToRecentFiles=False)
   try:
