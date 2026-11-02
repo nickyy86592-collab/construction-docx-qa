@@ -27,6 +27,8 @@ jobs:
 
       - name: Test adaptive front matter, editorial language, and module scoring review
         run: python audit/common/tests/test_upgrade.py --report upgrade-portable.json
+      - name: Test table alignment, inherited indents, widths and exceptions
+        run: python audit/common/tests/test_table_layout.py --report table-portable.json
       - uses: actions/upload-artifact@v4
         with:
           name: upgrade-word-test-input-${{ github.run_id }}
@@ -35,7 +37,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: upgrade-portable-${{ github.run_id }}
-          path: upgrade-portable.json
+          path: |
+            upgrade-portable.json
+            table-portable.json
           if-no-files-found: error
   native-format-regression:
     needs: portable-regression
@@ -59,11 +63,19 @@ jobs:
         run: |
           & $env:AUDIT_PYTHON audit/common/tests/test_upgrade.py --word --report upgrade-word.json
           exit $LASTEXITCODE
+      - name: Verify table layout in actual Microsoft Word
+        shell: powershell
+        run: |
+          & $env:AUDIT_PYTHON audit/common/tests/test_table_layout.py --word --report table-word.json
+          exit $LASTEXITCODE
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: upgrade-native-word-${{ github.run_id }}
           path: |
             upgrade-${{ github.run_id }}/upgrade-word.json
+            upgrade-${{ github.run_id }}/table-word.json
+            upgrade-${{ github.run_id }}/word-table-evidence/**
             upgrade-${{ github.run_id }}/word-toc-evidence/**
           if-no-files-found: warn
+

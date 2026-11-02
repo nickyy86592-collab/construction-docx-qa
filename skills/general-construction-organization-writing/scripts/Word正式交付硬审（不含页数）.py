@@ -191,6 +191,7 @@ def load_rules(path: Optional[Path], page_dir=None) -> Dict[str, Any]:
     if not isinstance(keywords,list) or any(not isinstance(v,str) or not v.strip() for v in keywords):
         raise AuditError('cover_keywords须为非空字符串数组')
     rules['front_matter'] = fm
+    table_layout(rules)  # 同一运行期规则中校验表格配置
     toc_layout(rules)  # 校验运行期招标例外；不增加独立配置文件
     patterns = rules.get('heading_patterns')
     if patterns is not None:
@@ -623,6 +624,199 @@ def check_toc_layout_word(doc, records, headings, rules):
     if not entries:failures.append({'reason':'当前要求有目录，Word前置范围内未定位到目录项'})
     return [CheckResult('目录页码对齐_Word','FAIL' if failures else 'PASS','按Word有效属性、实际坐标、标题末行及正文显示页码核验。',failures or measured),
             CheckResult('目录视觉与页码_待复核','WARN' if warnings else 'PASS','需结合Word实际渲染处理目录疑点；测量未完成不能当通过。' if warnings else ('已检查不显示页码的项目规则；仍须核对目录名称及实际渲染。' if not cfg['show_page_numbers'] else '目录实际测量完成，仍按既有流程查看渲染效果。'),warnings or None)]
+
+
+# Data-table layout is checked here, using the existing static/Word audit stages.
+TABLE_LAYOUT_DEFAULT = {'table_alignment':'center', 'header_alignment':'center',
+                        'short_text_alignment':'center', 'long_text_alignment':'left',
+                        'vertical_alignment':'center', 'zero_indents':True}
+
+
+def table_layout(rules):
+    raw=rules.get('table_layout',{})
+    if not isinstance(raw,dict):raise AuditError('table_layout必须为对象')
+    cfg={**TABLE_LAYOUT_DEFAULT,**raw}
+    for key in ('table_alignment','header_alignment','short_text_alignment','long_text_alignment'):
+        if cfg[key] not in ('left','center','right','both') or (key=='table_alignment' and cfg[key]=='both'):
+            raise AuditError('表格对齐配置无效：'+key)
+    if cfg['vertical_alignment'] not in ('top','center','bottom') or type(cfg['zero_indents']) is not bool:
+        raise AuditError('表格垂直对齐/缩进配置无效')
+    if any(cfg[k]!=v for k,v in TABLE_LAYOUT_DEFAULT.items()) and not str(cfg.get('source_ref','')).strip():
+        raise AuditError('偏离默认表格格式须引用有效格式依据source_ref')
+    entries=cfg.get('tables',[])
+    if not isinstance(entries,list):raise AuditError('table_layout.tables必须为数组')
+    seen=set()
+    for item in entries:
+        if not isinstance(item,dict) or type(item.get('index')) is not int or item['index']<1 or item['index'] in seen:
+            raise AuditError('表格index须为唯一正整数，按主文档中非嵌套表格顺序计数')
+        seen.add(item['index'])
+        if item.get('kind','data') not in ('data','layout','figure','photo'):
+            raise AuditError('表格kind无效')
+        if item.get('kind','data')!='data' and not str(item.get('reason','')).strip():
+            raise AuditError('排除非数据表须写明reason')
+        roles=item.get('column_roles',[])
+        if not isinstance(roles,list) or any(x not in ('short','long') for x in roles):
+            raise AuditError('column_roles须为short/long数组')
+        if type(item.get('header_rows',1)) is not int or item.get('header_rows',1)<0:
+            raise AuditError('header_rows须为非负整数')
+    return cfg
+
+
+def _table_result(failures,warnings,checked,word=False):
+    suffix='Word' if word else '静态'
+    return [CheckResult('表格排版_'+suffix,'FAIL' if failures else 'PASS',
+            '核对数据表整体、表头/列角色对齐、有效缩进及版心；不代替实际视觉复核。', failures or {'checked_tables':checked}),
+            CheckResult('表格渲染_待复核' if word else '表格排版_待复核','WARN' if warnings else 'PASS',
+            '逐项查看Word实际渲染，复核短名称、数字单位、自然换行及跨页衔接。' if warnings else '未发现可识别表格疑点，仍须按既有流程复核渲染。',warnings or None)]
+
+
+def check_table_layout_static(document,rules):
+    import zipfile
+    import xml.etree.ElementTree as ET
+    ns={'w':'http://schemas.openxmlformats.org/wordprocessingml/2006/main'};W='{'+ns['w']+'}'
+    cfg=table_layout(rules);failures=[];warnings=[];checked=0
+    entries={x['index']:x for x in cfg.get('tables',[])}
+    with zipfile.ZipFile(document) as z:
+        body=ET.fromstring(z.read('word/document.xml')).find('w:body',ns)
+        styles=ET.fromstring(z.read('word/styles.xml')) if 'word/styles.xml' in z.namelist() else ET.Element('styles')
+        sm={s.get(W+'styleId'):s for s in styles.findall('w:style',ns)}
+        defaults=styles.find('w:docDefaults/w:pPrDefault/w:pPr',ns)
+        def chain(sid):
+            out=[];seen=set()
+            while sid and sid not in seen and sid in sm:
+                seen.add(sid);node=sm[sid];out.insert(0,node);parent=node.find('w:basedOn',ns);sid=parent.get(W+'val') if parent is not None else None
+            return out
+        def val(el,key,default=None):return el.get(W+key,default) if el is not None else default
+        def merge(props):
+            result={}
+            for pr in props:
+                if pr is None:continue
+                for node in pr:
+                    name=node.tag.rsplit('}',1)[-1]
+                    result.setdefault(name,{}).update({k.rsplit('}',1)[-1]:v for k,v in node.attrib.items()})
+            return result
+        default_para=next((k for k,n in sm.items() if n.get(W+'type')=='paragraph' and n.get(W+'default') in ('1','true')),None)
+        def top_tables(el):
+            for child in el:
+                if child.tag==W+'tbl':yield child
+                else:yield from top_tables(child)
+        all_tables=list(top_tables(body))
+        for ti,t in enumerate(all_tables,1):
+            item=entries.get(ti,{});rows=t.findall('w:tr',ns);text=''.join(x.text or '' for x in t.iter(W+'t'));detail={'table':ti,'text':text[:100]}
+            if item.get('kind','data')!='data':continue
+            if ('实景图占位' in text or '需插入现场照片' in text) and len(rows)==1 and len(rows[0].findall('w:tc',ns))==1:continue
+            if t.findall('.//w:drawing',ns) or t.findall('.//w:pict',ns):
+                warnings.append({**detail,'reason':'含图件/对象的表格须按实际用途复核，不套普通数据表规则'});continue
+            counts=[len(r.findall('w:tc',ns)) for r in rows]
+            if not counts or max(counts)<2:
+                if item:warnings.append({**detail,'reason':'单列表须结合用途确认，不机械套用多列数据表规则'})
+                continue
+            if t.find('.//w:tbl',ns) is not None or t.find('.//w:gridSpan',ns) is not None or t.find('.//w:hMerge',ns) is not None or t.find('.//w:vMerge',ns) is not None or len(set(counts))!=1:
+                warnings.append({**detail,'reason':'嵌套/合并/不规则表格需Word逐项核查，静态不猜列角色或版心'});continue
+            checked+=1;cols=counts[0];roles=item.get('column_roles',[]);header=item.get('header_rows',1)
+            if ti not in entries or len(roles)!=cols or header>len(rows):
+                warnings.append({**detail,'reason':'须由AI按项目内容确认本表header_rows及每列short/long角色；未确认不强判内容对齐'})
+                roles=[]
+            default_table=next((k for k,n in sm.items() if n.get(W+'type')=='table' and n.get(W+'default') in ('1','true')),None)
+            pr=t.find('w:tblPr',ns);sid=val(pr.find('w:tblStyle',ns) if pr is not None else None,'val',default_table);tc=chain(sid)
+            # Conditional table paragraph/cell styles cannot be resolved from a partial rule guess.
+            conditional=any(n.find('w:pPr',ns) is not None or n.find('w:tcPr',ns) is not None
+                            for st in tc for n in st.findall('w:tblStylePr',ns))
+            if conditional:
+                warnings.append({**detail,'reason':'条件表格样式影响段落/单元格属性，须Word读取有效格式'});continue
+            tp=merge([s.find('w:tblPr',ns) for s in tc]+[pr])
+            floating=pr is not None and pr.find('w:tblpPr',ns) is not None
+            if not floating and tp.get('jc',{}).get('val','left')!=cfg['table_alignment']:
+                failures.append({**detail,'reason':'表格整体未按有效规则对齐','expected':cfg['table_alignment']})
+            if floating:
+                warnings.append({**detail,'reason':'浮动表须用Word实际页面核实整体对齐及版心边界，不凭行对齐属性硬判'})
+            if abs(float(tp.get('tblInd',{}).get('w','0')))>.1:
+                warnings.append({**detail,'reason':'表格带非零整体缩进，须核对Word实际左右边界'})
+            # Fixed grid overflow is definite; auto-fit/preferred widths need native Word.
+            parent=next((el for el in body if el is t or t in el.iter()),t);children=list(body);at=children.index(parent)
+            sec=next((el.find('w:pPr/w:sectPr',ns) for el in children[at:] if el.find('w:pPr/w:sectPr',ns) is not None),body.find('w:sectPr',ns))
+            sz=sec.find('w:pgSz',ns) if sec is not None else None;mar=sec.find('w:pgMar',ns) if sec is not None else None;columns=sec.find('w:cols',ns) if sec is not None else None
+            grid=[int(x.get(W+'w','0')) for x in t.findall('w:tblGrid/w:gridCol',ns)]
+            if sz is not None and mar is not None and not int(mar.get(W+'gutter','0')) and (columns is None or int(columns.get(W+'num','1'))==1):
+                width=int(sz.get(W+'w','0'))-int(mar.get(W+'left','0'))-int(mar.get(W+'right','0'))
+                if grid and sum(grid)>width+40:
+                    target=failures if not floating and tp.get('tblLayout',{}).get('type')=='fixed' else warnings
+                    target.append({**detail,'reason':'表格网格总宽超出版心；自动调整表须用Word确认实际宽度','grid_twips':sum(grid),'body_twips':width})
+            else:warnings.append({**detail,'reason':'多栏/装订线或页面信息不足，须Word确认表格实际版心'})
+            for ri,row in enumerate(rows):
+                for ci,cell in enumerate(row.findall('w:tc',ns)):
+                    cp=merge([s.find('w:tcPr',ns) for s in tc]+[cell.find('w:tcPr',ns)])
+                    loc={**detail,'row':ri+1,'column':ci+1}
+                    if cp.get('vAlign',{}).get('val','top')!=cfg['vertical_alignment']:
+                        failures.append({**loc,'reason':'单元格未按有效规则垂直对齐','expected':cfg['vertical_alignment']})
+                    for p in cell.findall('w:p',ns):
+                        pt=''.join(x.text or '' for x in p.iter(W+'t'))
+                        if not pt.strip():continue
+                        pp=p.find('w:pPr',ns);ps=val(pp.find('w:pStyle',ns) if pp is not None else None,'val',default_para)
+                        effective=merge([defaults]+[s.find('w:pPr',ns) for s in tc]+[s.find('w:pPr',ns) for s in chain(ps)]+[pp])
+                        indent=effective.get('ind',{})
+                        if cfg['zero_indents'] and 'numPr' not in effective and any(float(v)!=0 for k,v in indent.items() if k in ('left','right','start','end','firstLine','hanging','leftChars','rightChars','startChars','endChars','firstLineChars','hangingChars')):
+                            failures.append({**loc,'text':pt[:100],'reason':'单元格继承/设置了非零正文缩进','effective_indents':indent})
+                        elif 'numPr' in effective:
+                            warnings.append({**loc,'reason':'单元格内列表缩进须按实际层级复核，不机械清零'})
+                        expected=cfg['header_alignment'] if ri<header and roles else (cfg['short_text_alignment'] if roles and roles[ci]=='short' else cfg['long_text_alignment'] if roles else None)
+                        if expected and effective.get('jc',{}).get('val','left')!=expected:
+                            failures.append({**loc,'text':pt[:100],'reason':'表头/列角色水平对齐不符','expected':expected})
+                        if p.find('.//w:br',ns) is not None or p.find('.//w:tab',ns) is not None or re.search(r'[ \u3000]{3,}',pt):
+                            warnings.append({**loc,'text':pt[:100],'reason':'存在手动换行/制表符/连续空格，须确认未用于凑排版；不自动删除有效内容'})
+        absent=sorted(set(entries)-set(range(1,len(all_tables)+1)))
+        if absent:failures.append({'reason':'逐表配置指向不存在的表格','table_indices':absent})
+    return _table_result(failures,warnings,checked)
+
+
+def check_table_layout_word(doc,rules):
+    cfg=table_layout(rules);entries={x['index']:x for x in cfg.get('tables',[])};failures=[];warnings=[];checked=0
+    align={'left':0,'center':1,'right':2,'both':3};vertical={'top':0,'center':1,'bottom':3}
+    for ti in range(1,int(doc.Tables.Count)+1):
+        detail={'table':ti};item=entries.get(ti,{})
+        if item.get('kind','data')!='data':continue
+        try:
+            t=doc.Tables(ti);text=clean_text(t.Range.Text);detail.update(page=page_of_range(t.Range),text=text[:100])
+            if int(getattr(t,'NestingLevel',1))>1 or int(t.Range.Tables.Count)>1:
+                warnings.append({**detail,'reason':'嵌套表须按Word渲染逐项复核'});continue
+            if ('实景图占位' in text or '需插入现场照片' in text) and int(t.Range.Cells.Count)==1:continue
+            if int(t.Range.InlineShapes.Count)>0:
+                warnings.append({**detail,'reason':'图形/照片布局表按实际用途复核'});continue
+            cols=int(t.Columns.Count)
+            if cols<2:continue
+            rows=int(t.Rows.Count);roles=item.get('column_roles',[]);header=item.get('header_rows',1)
+            if len(roles)!=cols or header>rows:
+                warnings.append({**detail,'reason':'本表列角色/表头范围未可靠配置，须逐表复核'});roles=[]
+            checked+=1
+            floating=bool(getattr(t.Rows,'WrapAroundText',False))
+            if floating:warnings.append({**detail,'reason':'Word浮动表须核对实际页面位置，不凭行对齐属性认定边界'})
+            if not floating and int(t.Rows.Alignment)!=align[cfg['table_alignment']]:
+                failures.append({**detail,'reason':'Word有效表格整体对齐不符','expected':cfg['table_alignment']})
+            left_indent=float(t.Rows.LeftIndent)
+            if abs(left_indent)>.5:warnings.append({**detail,'reason':'Word表格带非零整体缩进，须查看实际左右边界','left_indent_pt':left_indent})
+            ps=t.Range.Sections(1).PageSetup
+            if floating or float(ps.Gutter)>0 or int(ps.TextColumns.Count)>1 or bool(getattr(ps,'MirrorMargins',False)):
+                warnings.append({**detail,'reason':'特殊页面版心须查看Word实际渲染'})
+            else:
+                width=sum(float(t.Rows(1).Cells(i).Width) for i in range(1,int(t.Rows(1).Cells.Count)+1))
+                usable=float(ps.PageWidth)-float(ps.LeftMargin)-float(ps.RightMargin)
+                if width>usable+2:failures.append({**detail,'reason':'Word实际表格总宽超出版心','width_pt':width,'body_width_pt':usable})
+            for ri in range(1,rows+1):
+                for ci in range(1,cols+1):
+                    cell=t.Cell(ri,ci);loc={**detail,'row':ri,'column':ci}
+                    if int(cell.VerticalAlignment)!=vertical[cfg['vertical_alignment']]:failures.append({**loc,'reason':'Word有效单元格垂直对齐不符'})
+                    for pi in range(1,int(cell.Range.Paragraphs.Count)+1):
+                        p=cell.Range.Paragraphs(pi)
+                        if not clean_text(p.Range.Text):continue
+                        pf=p.Format;expected=cfg['header_alignment'] if roles and ri<=header else (cfg['short_text_alignment'] if roles and roles[ci-1]=='short' else cfg['long_text_alignment'] if roles else None)
+                        if expected and int(pf.Alignment)!=align[expected]:failures.append({**loc,'reason':'Word有效表头/列角色水平对齐不符','expected':expected})
+                        is_list=int(p.Range.ListFormat.ListType)!=0
+                        ind={k:float(getattr(pf,k)) for k in ('LeftIndent','RightIndent','FirstLineIndent')}
+                        if cfg['zero_indents'] and not is_list and any(abs(v)>.1 and abs(v)<999000 for v in ind.values()):failures.append({**loc,'reason':'Word有效单元格段落缩进不为零','indents_pt':ind})
+                        if is_list:warnings.append({**loc,'reason':'单元格列表缩进须按层级复核'})
+            warnings.append({**detail,'reason':'核对实际渲染中短名称/数字单位换行、列宽比例及跨页表头；程序属性通过不代表视觉合格'})
+        except Exception as exc:warnings.append({**detail,'reason':'Word表格测量未完整完成（合并/复杂表可能不支持规则网格）：'+str(exc)})
+    return _table_result(failures,warnings,checked,True)
 
 
 def check_project_parameter_completeness(rules: Dict[str, Any]) -> CheckResult:
@@ -1662,6 +1856,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         results.extend(heading_checks)
         results.extend(check_front_page_and_body(doc, records, headings, rules, page_count))
         results.extend(check_toc_layout_word(doc, records, headings, rules))
+        results.extend(check_table_layout_word(doc, rules))
         results.append(check_heading_level_presence(headings))
         results.append(check_required_level1(headings, rules))
         results.append(check_heading_sequence(headings))
@@ -1682,7 +1877,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         overall = "PASS" if not hard_failures else "FAIL"
 
         report = {
-            "audit_version": "1.8.4",
+            "audit_version": "1.9.0",
             "rules_sha256": rules_digest(rules),
             "photo_delivery_stage": rules.get("photo_delivery_stage"),
             "layout_engine": "Microsoft Word",
@@ -1911,6 +2106,7 @@ def portable_checks(document, rules):
                 out.append(CheckResult('真实照片_'+name,'PASS' if valid else 'FAIL','实景图片须邻接图题、绑定嵌入图片哈希、有来源并完成真实性人工核验。'))
     out.extend(language_checks(document_language_records(document)))
     out.extend(check_toc_layout_static(document,rules))
+    out.extend(check_table_layout_static(document,rules))
     return out
 
 
@@ -1918,7 +2114,7 @@ def static_audit(document, rules_path, report_path,page_dir=None):
     rules = load_rules(rules_path,page_dir)
     results = portable_checks(document, rules)
     overall = 'FAIL' if any(x.status=='FAIL' for x in results) else 'PASS'
-    report = {'audit_version':'1.8.4', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
+    report = {'audit_version':'1.9.0', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
               'rules_sha256':rules_digest(rules), 'photo_delivery_stage':rules.get('photo_delivery_stage'),
               'delivery_status':overall, 'checks':[asdict(x) for x in results],
               'notes':['静态核验不使用Word，不能证明实际页数、版式、照片真实性或技术参数正确。']}
