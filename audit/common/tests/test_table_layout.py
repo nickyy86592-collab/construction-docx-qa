@@ -21,46 +21,58 @@ W='{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 def el(name,**attrs):
  from xml.etree.ElementTree import Element
  return Element(W+name,{W+k:str(v) for k,v in attrs.items()})
+def _write_table_docx(path,widths,contents,center_body=False,body_indent=False):
+ from xml.sax.saxutils import escape
+ # Standard-library OOXML seed: native Word runners need only pywin32.
+ def paragraph(text,alignment=None,zero=False,header=False):
+  props=('<w:ind w:left="0" w:right="0" w:firstLine="'+('480' if body_indent and not header else '0')+'"/>' if zero else '')
+  if alignment:props+='<w:jc w:val="'+alignment+'"/>'
+  props+='<w:spacing w:before="40" w:after="40"/>'
+  return '<w:p><w:pPr>'+props+'</w:pPr><w:r><w:rPr><w:rFonts w:ascii="SimSun" w:hAnsi="SimSun" w:eastAsia="SimSun"/><w:sz w:val="24"/>'+('<w:color w:val="FFFFFF"/>' if header else '')+'</w:rPr><w:t>'+escape(text)+'</w:t></w:r></w:p>'
+ rows=[]
+ for ri,texts in enumerate(contents):
+  cells=[]
+  for ci,text in enumerate(texts):
+   alignment='center' if ri==0 or center_body or (len(widths)>1 and ci<len(widths)-1) else 'left'
+   cells.append('<w:tc><w:tcPr><w:tcW w:w="'+str(widths[ci])+'" w:type="dxa"/><w:shd w:val="clear" w:fill="'+('284B65' if ri==0 else 'EAF0F4')+'"/><w:vAlign w:val="center"/></w:tcPr>'+paragraph(text,alignment,True,ri==0)+'</w:tc>')
+  rows.append('<w:tr>'+('<w:trPr><w:tblHeader w:val="1"/></w:trPr>' if ri==0 else '')+''.join(cells)+'</w:tr>')
+ borders=''.join('<w:'+side+' w:val="single" w:sz="4" w:color="D4DFE7"/>' for side in ('top','left','bottom','right','insideH','insideV'))
+ table='<w:tbl><w:tblPr><w:tblW w:w="'+str(sum(widths))+'" w:type="dxa"/><w:jc w:val="center"/><w:tblBorders>'+borders+'</w:tblBorders><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>'+''.join('<w:gridCol w:w="'+str(w)+'"/>' for w in widths)+'</w:tblGrid>'+''.join(rows)+'</w:tbl>'
+ body='<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>第一章 表格排版集成测试</w:t></w:r></w:p>'+paragraph('按资料核对设备、数量及投入计划，分工序落实检验和交接。')+table+'<w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1134" w:bottom="1440" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>'
+ styles='<w:styles xmlns:w="'+W[1:-1]+'"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="SimSun" w:hAnsi="SimSun" w:eastAsia="SimSun"/><w:sz w:val="24"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:ind w:firstLine="480"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:firstLine="0"/><w:outlineLvl w:val="0"/></w:pPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/></w:style></w:styles>'
+ with zipfile.ZipFile(path,'w',zipfile.ZIP_DEFLATED) as z:
+  z.writestr('[Content_Types].xml','<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>')
+  z.writestr('_rels/.rels','<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')
+  z.writestr('word/_rels/document.xml.rels','<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>')
+  z.writestr('word/styles.xml',styles)
+  z.writestr('word/document.xml','<w:document xmlns:w="'+W[1:-1]+'"><w:body>'+body+'</w:body></w:document>')
+ return path
+
 def fixture(path,mutation=None,many=False):
- from docx import Document
- from docx.shared import Pt,Twips
- from docx.enum.table import WD_TABLE_ALIGNMENT,WD_CELL_VERTICAL_ALIGNMENT
- from docx.enum.text import WD_ALIGN_PARAGRAPH
- from docx.oxml import OxmlElement
- from docx.oxml.ns import qn
- d=Document();sec=d.sections[0];sec.page_width=Twips(11906);sec.page_height=Twips(16838);sec.left_margin=sec.right_margin=Twips(1134)
- normal=d.styles['Normal'];normal.font.name='SimSun';normal.font.size=Pt(12);normal.paragraph_format.first_line_indent=Pt(24)
- d.add_heading('第一章 表格排版集成测试',1);d.add_paragraph('按资料核对设备、数量及投入计划，分工序落实检验和交接。')
- t=d.add_table(rows=1,cols=4);t.alignment=WD_TABLE_ALIGNMENT.CENTER;t.autofit=False
- widths=[1900,1400,1800,4500]
- for g,w in zip(t.columns,widths):g.width=Twips(w)
  contents=[['设备名称','拟用数量','投入时段','规格、用途及能力'],['挖掘机','2台','1—30天','按批准参数选型；清淤与基础作业各1台，进场验收合格后使用。'],['自卸运输车','14辆','6—30天','有效容量按核定值投入，根据现场运输循环及作业面条件调整。'],['振动压路机','1台','16—40天','吨位经试验段、承载核定，作业前检查路基及基层状态。'],['小型夯机','4台','10—40天','狭槽边角适配型；灰土与道路边角按工作面分别投入并备用。'],['排水泵软管','3套','1—90天','按来水流量扬程核定配置，服务导排集水，超出能力时增配。']]
  if many:contents+=contents[1:]*10
- for ri,texts in enumerate(contents):
-  row=t.rows[0] if ri==0 else t.add_row()
-  if ri==0:
-   repeat=OxmlElement('w:tblHeader');repeat.set(qn('w:val'),'1');row._tr.get_or_add_trPr().append(repeat)
-  for ci,text in enumerate(texts):
-   cell=row.cells[ci];cell.width=Twips(widths[ci]);cell.vertical_alignment=WD_CELL_VERTICAL_ALIGNMENT.CENTER;cell.text=text
-   p=cell.paragraphs[0];p.alignment=WD_ALIGN_PARAGRAPH.CENTER if ri==0 or ci<3 else WD_ALIGN_PARAGRAPH.LEFT
-   pf=p.paragraph_format;pf.left_indent=pf.right_indent=pf.first_line_indent=Pt(0);pf.space_before=pf.space_after=Pt(2)
-   for run in p.runs:run.font.name='SimSun';run.font.size=Pt(12)
- d.save(path)
+ _write_table_docx(path,[1900,1400,1800,4500],contents)
  if mutation:xml_patch(path,mutation)
  return path
 
 def single_fixture(path,center_body=False,indent=False):
- from docx import Document
- from docx.shared import Pt
- from docx.enum.table import WD_TABLE_ALIGNMENT,WD_CELL_VERTICAL_ALIGNMENT
- from docx.enum.text import WD_ALIGN_PARAGRAPH
- d=Document();table=d.add_table(rows=2,cols=1);table.alignment=WD_TABLE_ALIGNMENT.CENTER
- for ri,text in enumerate(('施工要求','作业前核对工作面与设计接口，按批准工艺组织实施，检验合格后交接。')):
-  cell=table.cell(ri,0);cell.text=text;cell.vertical_alignment=WD_CELL_VERTICAL_ALIGNMENT.CENTER
-  p=cell.paragraphs[0];p.alignment=WD_ALIGN_PARAGRAPH.CENTER if ri==0 or center_body else WD_ALIGN_PARAGRAPH.LEFT
-  pf=p.paragraph_format;pf.left_indent=pf.right_indent=pf.first_line_indent=Pt(0)
- if indent:table.cell(1,0).paragraphs[0].paragraph_format.first_line_indent=Pt(24)
- d.save(path);return path
+ return _write_table_docx(path,[9600],[['施工要求'],['作业前核对工作面与设计接口，按批准工艺组织实施，检验合格后交接。']],center_body,indent)
+
+
+def native_fixtures(base):
+ fixture(base/'good.docx')
+ def indent(root,styles):root.find('.//'+W+'tbl//'+W+'pPr/'+W+'ind').clear()
+ fixture(base/'inherited-indent.docx',indent)
+ def tableleft(root,styles):root.find('.//'+W+'tbl/'+W+'tblPr/'+W+'jc').set(W+'val','left')
+ fixture(base/'table-left.docx',tableleft)
+ def vertical(root,styles):root.find('.//'+W+'tbl//'+W+'vAlign').set(W+'val','top')
+ fixture(base/'vertical-top.docx',vertical)
+ def long(root,styles):root.findall('.//'+W+'tbl/'+W+'tr')[1].findall(W+'tc')[3].find('.//'+W+'jc').set(W+'val','center')
+ fixture(base/'long-center.docx',long)
+ def short(root,styles):root.findall('.//'+W+'tbl/'+W+'tr')[1].find('.//'+W+'pPr/'+W+'jc').set(W+'val','left')
+ fixture(base/'short-left.docx',short)
+ single_fixture(base/'single-good.docx');single_fixture(base/'single-indent.docx',indent=True);single_fixture(base/'single-center.docx',center_body=True)
+
 SINGLE_CFG={'table_layout':{'tables':[{'index':1,'kind':'data','header_rows':1,'column_roles':['long']}]}}
 
 def portable(base):
@@ -169,7 +181,9 @@ def word_suite(base):
 def main():
  ap=argparse.ArgumentParser();ap.add_argument('--word',action='store_true');ap.add_argument('--report',type=Path);args=ap.parse_args()
  with tempfile.TemporaryDirectory() as tmp:
-  base=Path(tmp);portable(base);evidence=word_suite(base) if args.word else None
+  base=Path(tmp)
+  if args.word:native_fixtures(base);evidence=word_suite(base)
+  else:portable(base);evidence=None
  result={'status':'PASS','checks':len(RESULTS),'word_requested':args.word,'word_evidence_dir':evidence,'tests':RESULTS}
  if args.report:args.report.parent.mkdir(parents=True,exist_ok=True);args.report.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
  print(json.dumps(result,ensure_ascii=False))
