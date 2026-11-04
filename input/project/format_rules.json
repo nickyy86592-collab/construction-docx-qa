@@ -1,0 +1,376 @@
+{
+  "front_matter": {
+    "cover_required": true,
+    "toc_levels": [
+      1
+    ],
+    "cover_page_range": [
+      1,
+      1
+    ],
+    "toc_page_range": [
+      1,
+      1
+    ],
+    "cover_keywords": [
+      "巢湖市中垾镇2026年小联圩行政村东李中心村建设项目",
+      "技术文件",
+      "投标人",
+      "盖单位章"
+    ],
+    "source_ref": "招标PDF实际第67、161—163页，项目初始提示词第2项"
+  },
+  "required_level1_titles": [
+    "工程概况",
+    "主要施工方法",
+    "拟投入的主要物资计划",
+    "拟投入的主要施工机械、设备计划",
+    "劳动力安排计划",
+    "确保工程质量的技术组织措施",
+    "确保安全生产的技术组织措施",
+    "确保工期的技术组织措施",
+    "确保文明施工的技术组织措施",
+    "施工总平面布置图"
+  ],
+  "font_rules": {
+    "body": {
+      "name_east_asia": "宋体",
+      "size_pt": 14
+    },
+    "heading1": {
+      "name_east_asia": "宋体",
+      "size_pt": 16
+    },
+    "heading2": {
+      "name_east_asia": "宋体",
+      "size_pt": 16
+    },
+    "heading3": {
+      "name_east_asia": "宋体",
+      "size_pt": 16
+    }
+  },
+  "required_figures": [
+    {
+      "name": "窄巷污水施工与路面交接示意图",
+      "keywords": [
+        "窄巷污水施工与路面交接示意图"
+      ],
+      "hard": true,
+      "color_required": true,
+      "purpose": "说明窄巷施工的隐蔽放行及路面接手",
+      "location": "第二章第二节",
+      "context_anchor": "窄巷污水工序的放行以井段为单位，覆土前完成检查与测绘，回填检查合格后才向道路班交接。"
+    },
+    {
+      "name": "湿地终端水路与验收停点示意图",
+      "keywords": [
+        "湿地终端水路与验收停点示意图"
+      ],
+      "hard": true,
+      "color_required": true,
+      "purpose": "区分集中湿地各处理单元及先验后放行的逻辑",
+      "location": "第二章第三节",
+      "context_anchor": "终端先通过池体防渗检查，再验收布集水与填料，最后分片通水并核对下游接纳，控制来水冲击和未处理排放。"
+    },
+    {
+      "name": "施工进度横道图",
+      "keywords": [
+        "施工进度横道图"
+      ],
+      "hard": true,
+      "color_required": true
+    },
+    {
+      "name": "施工进度网络图",
+      "keywords": [
+        "施工进度网络图"
+      ],
+      "hard": true,
+      "color_required": true
+    },
+    {
+      "name": "施工功能分区示意图",
+      "keywords": [
+        "施工功能分区示意图"
+      ],
+      "hard": true,
+      "color_required": true
+    }
+  ],
+  "required_real_photo_slots": [],
+  "photo_delivery_stage": "final",
+  "visual_policy": {
+    "version": 1,
+    "real_photos": {
+      "decision": "schematic",
+      "reason": "无已核真实现场照片；窄巷工序移交和终端内部水路的标注示意能传达施工控制，且避免把图纸外参当现场。",
+      "replacement_figures": [
+        "窄巷污水施工与路面交接示意图",
+        "湿地终端水路与验收停点示意图"
+      ]
+    },
+    "color_figures": {
+      "mode": "color"
+    },
+    "additional_figures": {
+      "names": [
+        "窄巷污水施工与路面交接示意图",
+        "湿地终端水路与验收停点示意图"
+      ],
+      "reason": "分别用于交接控制和防渗—通水的验收放行。"
+    }
+  },
+  "table_layout": {
+    "tables": [
+      {
+        "index": 1,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "long",
+          "short"
+        ]
+      },
+      {
+        "index": 2,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 3,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 4,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "long",
+          "short"
+        ]
+      },
+      {
+        "index": 5,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 6,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 7,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 8,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 9,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 10,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 11,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 12,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 13,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 14,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 15,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 16,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 17,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "long"
+        ]
+      },
+      {
+        "index": 18,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 19,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 20,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 21,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 22,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 23,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short"
+        ]
+      },
+      {
+        "index": 24,
+        "kind": "data",
+        "header_rows": 1,
+        "column_roles": [
+          "short",
+          "short",
+          "short"
+        ]
+      }
+    ]
+  }
+}

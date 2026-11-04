@@ -1,0 +1,65 @@
+name: Chaohu Word audit
+on:
+  push:
+    branches: [audit/chaohu-2026ammgz50056]
+    paths: ['input/project/**', '.github/workflows/word-chaohu-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: word-chaohu-2026ammgz50056
+  cancel-in-progress: false
+jobs:
+  inputs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify stage and final inputs
+        run: |
+          test "$(python audit/common/runner_audit.py --mode stage --project-dir input/project --check-ready)" = true
+          test "$(python audit/common/runner_audit.py --mode formal --project-dir input/project --check-ready)" = true
+          test -f input/project/stage-40.docx
+          test -f input/project/stage-75.docx
+          test -f input/project/巢湖项目页数硬审.py
+          sha256sum input/project/*.docx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaohu-input-${{ github.run_id }}
+          path: |
+            audit/common/
+            input/project/
+          if-no-files-found: error
+  word:
+    needs: inputs
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: chaohu-${{ github.run_id }}
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: chaohu-input-${{ github.run_id }}
+          path: chaohu-${{ github.run_id }}
+      - name: Prepare cached Python and Word COM
+        shell: powershell
+        run: audit/common/prepare_python.ps1
+      - name: Measure the two saved stage documents
+        shell: powershell
+        run: |
+          & $env:AUDIT_PYTHON audit/common/runner_audit.py --mode stage --project-dir input/project --outdir output/stages
+          exit $LASTEXITCODE
+      - name: Run formal Word and page audit
+        if: always()
+        shell: powershell
+        run: |
+          & $env:AUDIT_PYTHON audit/common/runner_audit.py --mode formal --project-dir input/project --outdir output/final
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chaohu-word-${{ github.run_id }}
+          path: chaohu-${{ github.run_id }}/output/
+          if-no-files-found: error
