@@ -1396,10 +1396,16 @@ def check_last_page_whitespace(doc, page_count: int, rules: Dict[str, Any]) -> C
         page = window.Panes(1).Pages.Item(page_count)
         scale = box["page_height_pt"] / float(page.Height)
         bottoms = []
+        untyped_blocks = 0
         rectangles = page.Rectangles
         for i in range(1, int(rectangles.Count) + 1):
             rect = rectangles.Item(i)
-            kind = int(rect.RectangleType)
+            try:
+                kind = int(rect.RectangleType)
+            except Exception:
+                # Word can expose auxiliary entries with no printable rectangle type.
+                untyped_blocks += 1
+                continue
             if kind not in (WD_TEXT_RECTANGLE, WD_SHAPE_RECTANGLE):
                 continue
             operation = f"读取布局块 {i} 的边界"
@@ -1445,6 +1451,7 @@ def check_last_page_whitespace(doc, page_count: int, rules: Dict[str, Any]) -> C
         content_bottom_pt=content_bottom,
         bottom_blank_height_pt=blank_height,
         bottom_blank_ratio=ratio,
+        untyped_layout_blocks=untyped_blocks,
     )
     return CheckResult(
         "末页留白", "PASS" if passed else "FAIL",
