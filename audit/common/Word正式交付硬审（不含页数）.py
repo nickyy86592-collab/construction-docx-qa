@@ -1414,13 +1414,18 @@ def check_last_page_whitespace(doc, page_count: int, rules: Dict[str, Any]) -> C
                 continue
             operation = f"读取布局块 {i} 的行集合"
             lines = rect.Lines
-            for j in range(1, int(lines.Count) + 1):
+            line_count = int(lines.Count)
+            for j in range(line_count, 0, -1):
                 line = lines.Item(j)
                 operation = f"读取布局块 {i} 第 {j} 行内容"
                 rng = line.Range
                 if int(rng.StoryType) == WD_MAIN_TEXT_STORY and clean_text(rng.Text):
                     operation = f"读取布局块 {i} 第 {j} 行几何"
-                    bottoms.append((float(line.Top) + float(line.Height)) * scale)
+                    # The native rectangle is the bottom edge when its final
+                    # line contains content, including a table's row boundary.
+                    bottom = rect_bottom if j == line_count else (float(line.Top) + float(line.Height)) * scale
+                    bottoms.append(bottom)
+                    break
         if not bottoms or any(not math.isfinite(y) for y in bottoms):
             raise AuditError("未取得末页实际文字、图表的有效底边")
         content_bottom = max(bottoms)

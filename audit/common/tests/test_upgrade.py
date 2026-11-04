@@ -111,6 +111,19 @@ def last_page_word_cases(word):
    pages=int(doc.ComputeStatistics(c.WD_STATISTIC_PAGES))
    result=c.check_last_page_whitespace(doc,pages,{'body_start_page':1})
    print('LAST_PAGE_NATIVE',case,pages,result.status,json.dumps(result.details,ensure_ascii=False),flush=True)
+   if result.status!=expected or 'bottom_blank_ratio' not in result.details:
+    page=doc.ActiveWindow.Panes(1).Pages.Item(pages)
+    print('PROBE PAGE',page.Height,'BODY',ps.PageHeight,ps.TopMargin,ps.BottomMargin,flush=True)
+    for n in range(max(1,page.Rectangles.Count-4),page.Rectangles.Count+1):
+     rect=page.Rectangles.Item(n)
+     try:
+      print('PROBE RECT',n,rect.RectangleType,rect.Top,rect.Height,flush=True)
+      for i in range(1,rect.Lines.Count+1):
+       line=rect.Lines.Item(i);rng=line.Range
+       print('PROBE LINE RANGE',i,rng.StoryType,rng.Start,rng.End,repr(rng.Text),flush=True)
+       try:print('PROBE LINE BOUNDS',line.Top,line.Height,flush=True)
+       except Exception as exc:print('PROBE LINE ERROR',repr(exc),flush=True)
+     except Exception as exc:print('PROBE RECT ERROR',repr(exc),flush=True)
    check('Native final-page '+case,pages==1 and result.status==expected and 'bottom_blank_ratio' in result.details)
   finally:
    doc.Close(False)
