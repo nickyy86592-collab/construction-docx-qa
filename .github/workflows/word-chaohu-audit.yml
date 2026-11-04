@@ -46,13 +46,18 @@ jobs:
       - name: Prepare cached Python and Word COM
         shell: powershell
         run: audit/common/prepare_python.ps1
-      - name: Measure the two saved stage documents
+      - name: Refresh and verify the table of contents in Microsoft Word
         shell: powershell
         run: |
-          & $env:AUDIT_PYTHON audit/common/runner_audit.py --mode stage --project-dir input/project --outdir output/stages
-          exit $LASTEXITCODE
+          & $env:AUDIT_PYTHON input/project/sync_toc.py input/project/design.docx output/final/toc-sync.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item input/project/design.docx output/final/design-audited.docx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chaohu-word-pagination-${{ github.run_id }}
+          path: chaohu-${{ github.run_id }}/output/final/toc-sync.json
+          if-no-files-found: error
       - name: Run formal Word and page audit
-        if: always()
         shell: powershell
         run: |
           & $env:AUDIT_PYTHON audit/common/runner_audit.py --mode formal --project-dir input/project --outdir output/final
