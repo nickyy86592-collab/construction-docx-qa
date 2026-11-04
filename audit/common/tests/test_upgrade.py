@@ -86,7 +86,7 @@ def portable(base):
  check('long sample remains mandatory',f.planning_policy(395)['pilot_required'])
 
 def last_page_word_cases(word):
- for case,count,expected in [('dense text',32,'PASS'),('short text',12,'FAIL'),('table at bottom',26,'PASS')]:
+ for case,count,expected in [('dense text',32,'PASS'),('short text',12,'FAIL'),('table at bottom',26,'PASS'),('shape at bottom',22,'PASS')]:
   doc=word.Documents.Add()
   try:
    ps=doc.PageSetup
@@ -103,6 +103,10 @@ def last_page_word_cases(word):
     table=doc.Tables.Add(doc.Range(end,end),1,1)
     table.Cell(1,1).Range.Text='A substantive table entry'
     table.Rows.HeightRule=2;table.Rows.Height=72
+   if case=='shape at bottom':
+    shape=doc.Shapes.AddShape(1,72,570,80,50,doc.Paragraphs(1).Range)
+    shape.RelativeVerticalPosition=1;shape.Top=570
+    shape.RelativeHorizontalPosition=1;shape.Left=72
    doc.Repaginate()
    pages=int(doc.ComputeStatistics(c.WD_STATISTIC_PAGES))
    result=c.check_last_page_whitespace(doc,pages,{'body_start_page':1})

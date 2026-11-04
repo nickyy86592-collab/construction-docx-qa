@@ -60,8 +60,8 @@ WD_VERTICAL_POSITION_RELATIVE_TO_PAGE = 6
 WD_GOTO_PAGE = 1
 WD_GOTO_ABSOLUTE = 1
 WD_OUTLINE_BODY_TEXT = 10
-WD_MAIN_TEXT_STORY = 1
 WD_TEXT_RECTANGLE = 0
+WD_SHAPE_RECTANGLE = 1
 LAST_PAGE_BLANK_LIMIT = 0.20
 WD_SECTION_CONTINUOUS = 0
 WD_SECTION_NEW_COLUMN = 1
@@ -1380,6 +1380,7 @@ def check_last_page_whitespace(doc, page_count: int, rules: Dict[str, Any]) -> C
         "body_page": _body_page_number(page_count, int(rules["body_start_page"])),
         "limit_ratio": LAST_PAGE_BLANK_LIMIT,
     }
+    operation = "定位末页"
     try:
         if detail["body_page"] is None:
             raise AuditError("未定位到末页正文")
@@ -1390,33 +1391,39 @@ def check_last_page_whitespace(doc, page_count: int, rules: Dict[str, Any]) -> C
         window = doc.ActiveWindow
         window.View.Type = 3  # wdPrintView
         window.ScrollIntoView(page_range, False)
+        operation = "获取 Word 页面布局"
         page = window.Panes(1).Pages.Item(page_count)
         scale = box["page_height_pt"] / float(page.Height)
         bottoms = []
         rectangles = page.Rectangles
         for i in range(1, int(rectangles.Count) + 1):
             rect = rectangles.Item(i)
-            if int(rect.RectangleType) != WD_TEXT_RECTANGLE or int(rect.Range.StoryType) != WD_MAIN_TEXT_STORY:
+            kind = int(rect.RectangleType)
+            if kind not in (WD_TEXT_RECTANGLE, WD_SHAPE_RECTANGLE):
                 continue
+            operation = f"读取布局块 {i} 的边界"
+            rect_top = float(rect.Top) * scale
+            rect_bottom = rect_top + float(rect.Height) * scale
+            if rect_top >= box["body_bottom_pt"] or rect_bottom <= box["body_top_pt"]:
+                continue
+            if kind == WD_SHAPE_RECTANGLE:
+                bottoms.append(rect_bottom)
+                continue
+            operation = f"读取布局块 {i} 的行集合"
             lines = rect.Lines
             for j in range(1, int(lines.Count) + 1):
                 line = lines.Item(j)
-                rng = line.Range
-                text = clean_text(rng.Text).replace("\x01", "").strip()
-                if text or int(rng.InlineShapes.Count):
+                operation = f"读取布局块 {i} 第 {j} 行内容"
+                if clean_text(line.Range.Text):
+                    operation = f"读取布局块 {i} 第 {j} 行几何"
                     bottoms.append((float(line.Top) + float(line.Height)) * scale)
-        # Floating main-story drawings are not part of the lines collection.
-        for shape in _visuals_on_page(doc, page_range, box):
-            if shape["kind"] == "Shape":
-                if shape["bottom_pt"] is None:
-                    raise AuditError("无法取得末页正文浮动图件底边")
-                bottoms.append(shape["bottom_pt"])
         if not bottoms or any(not math.isfinite(y) for y in bottoms):
             raise AuditError("未取得末页实际文字、图表的有效底边")
         content_bottom = max(bottoms)
         if not box["body_top_pt"] < content_bottom <= box["page_height_pt"]:
             raise AuditError("末页正文底边坐标超出有效范围")
     except Exception as exc:
+        detail["operation"] = operation
         detail["reason"] = str(exc)
         return CheckResult("末页留白", "FAIL", "未取得可靠的 Microsoft Word 末页几何，须复测。", detail)
 
@@ -2120,7 +2127,8 @@ def section_heading_review_errors(document, review):
         elif block["outline"] == 2 and chapter:
             current = (chapter, title, [])
             sections.append(current)
-        elif current is not None and block["outline"] != 3:
+        elif (current is not None and block["outline"] != 3 and block["table_index"] is None
+              and not block["caption_style"] and not any(_caption_match(title, label) for label in ("图", "表"))):
             current[2].append(title)
 
     if not sections or len(review) != len(sections):
@@ -2135,7 +2143,8 @@ def section_heading_review_errors(document, review):
         quote = record.get("evidence_quote")
         if not isinstance(criterion, str) or not criterion.strip():
             errors.append(f"缺少评分维度、施工控制重点或指定标题依据：{chapter} / {section}")
-        if not isinstance(quote, str) or not normalize_spaces(quote) or not any(normalize_spaces(quote) in p for p in body):
+        quote = normalize_spaces(quote) if isinstance(quote, str) else ""
+        if len(re.sub(r"\s+", "", quote)) < 12 or not any(quote in paragraph for paragraph in body):
             errors.append(f"节名支撑引文未在本节正文找到：{chapter} / {section}")
     return errors
 
