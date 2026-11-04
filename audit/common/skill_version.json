@@ -3,7 +3,7 @@
   "version": "2026-11-04-r12",
   "format_audit_version": "1.12.0",
   "common_files_sha256": {
-    "Word正式交付硬审（不含页数）.py": "31e12c93b52f1a86cabbe3b108c0e0725c60334298f526ce0cf9db5a517b9afb",
+    "Word正式交付硬审（不含页数）.py": "ec7c4752f8ead313b69466f6ee4fceb7fe96762b5ac2429391c3284bc6896327",
     "visual_policy.py": "0bc3f5568b4ada916069092ebda72ecdbd3745cc7fa8007ae91e87e3c2706dc0",
     "编制流程门禁.py": "2f66fca270ec71a80372fad452685009c9284c19c83d9c5e2f2684f1e34ae8b1",
     "评分响应核验.py": "b0fd9fb44d2d89c9b9eb20412edcf24c10de894a1678037dd5e977ace863fbfa"
