@@ -9,9 +9,17 @@ import sys
 from pathlib import Path
 
 COMMON = Path(__file__).resolve().parent
+# The Windows runner uses an embeddable Python with an isolated ._pth file.
+sys.path.insert(0, str(COMMON))
 
 def execute(argv):
-    return subprocess.run([sys.executable,*map(str,argv)]).returncode
+    bootstrap = (
+        "import runpy, sys; from pathlib import Path; "
+        "sys.argv.pop(0); "
+        "sys.path.insert(0, str(Path(sys.argv[0]).resolve().parent)); "
+        "runpy.run_path(sys.argv[0], run_name='__main__')"
+    )
+    return subprocess.run([sys.executable, "-c", bootstrap, *map(str, argv)]).returncode
 
 def load_flow(page_dir):
     spec=importlib.util.spec_from_file_location('_project_flow',COMMON/'编制流程门禁.py')
