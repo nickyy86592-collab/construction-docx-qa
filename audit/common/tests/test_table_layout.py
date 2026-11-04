@@ -3,6 +3,7 @@ from pathlib import Path
 import argparse,copy,importlib.util,json,sys,tempfile,zipfile,os
 from dataclasses import asdict
 COMMON=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(COMMON))
 spec=importlib.util.spec_from_file_location('table_word_audit',COMMON/'Word正式交付硬审（不含页数）.py')
 c=importlib.util.module_from_spec(spec);sys.modules[spec.name]=c;spec.loader.exec_module(c)
 RESULTS=[]

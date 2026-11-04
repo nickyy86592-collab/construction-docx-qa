@@ -12,9 +12,10 @@ if len(sys.argv)>1:ORIGIN=Path(sys.argv[1]);COMMON=ORIGIN/'scripts'
 else:COMMON=Path(__file__).resolve().parents[1]
 TEMPDIR=tempfile.TemporaryDirectory();BASE=Path(TEMPDIR.name)
 ROOT=BASE/'scripts';ROOT.mkdir()
-for name in ('编制流程门禁.py','Word正式交付硬审（不含页数）.py','评分响应核验.py'):shutil.copy2(COMMON/name,ROOT/name)
+for name in ('编制流程门禁.py','Word正式交付硬审（不含页数）.py','评分响应核验.py','visual_policy.py'):shutil.copy2(COMMON/name,ROOT/name)
 PAGE=ROOT/'测试项目页数硬审.py'
 PAGE.write_text('EXPECTED_BODY_PAGES = 395\nPAGE_TOLERANCE = 5\nFRONT_MATTER_PAGES = 1\n')
+sys.path.insert(0,str(ROOT))
 def load(name,path):
  sp=importlib.util.spec_from_file_location(name,path);m=importlib.util.module_from_spec(sp);sys.modules[name]=m;sp.loader.exec_module(m);return m
 f=load('flow',ROOT/'编制流程门禁.py');c=load('word',ROOT/'Word正式交付硬审（不含页数）.py')
@@ -25,7 +26,11 @@ def check(label,expr):
 def write(path,data):path.write_text(json.dumps(data,ensure_ascii=False,indent=2));return path
 def evidence(p,locator='synthetic test only'):return {'path':str(p),'sha256':f.sha256(p),'locator':locator}
 SOURCE=BASE/'tender-fixture.txt';SOURCE.write_text('Synthetic source for structure tests, not actual project evidence.')
-FORMAT=BASE/'format.json';write(FORMAT,{'font_rules':{},'required_level1_titles':[], 'required_figures':[{'name':n,'hard':True,'color_required':True} for n in c.FIGURE_NAMES], 'required_real_photo_slots':[{'name':'现场现状'}],'photo_delivery_stage':'draft'})
+POLICY={'version':1,'real_photos':{'decision':'required','reason':'fixture','replacement_figures':[]},
+        'color_figures':{'mode':'color'},
+        'additional_figures':{'names':[],'reason':'fixture baseline',
+                              'override':{'source_type':'prompt','source_ref':'synthetic','quote':'only base figures'}}}
+FORMAT=BASE/'format.json';write(FORMAT,{'visual_policy':POLICY,'font_rules':{},'required_level1_titles':[], 'required_figures':[{'name':n,'hard':True,'color_required':True} for n in c.FIGURE_NAMES], 'required_real_photo_slots':[{'name':'现场现状'}],'photo_delivery_stage':'draft'})
 PNG=BASE/'pilot.png';im=Image.new('RGB',(400,600),'white');dr=ImageDraw.Draw(im)
 for i,col in enumerate(('red','green','blue')):dr.rectangle((30,40+i*160,370,150+i*160),fill=col)
 im.save(PNG)
@@ -36,7 +41,7 @@ def start_case(target=395,tol=5,front=1):
  PAGE.write_text(f'EXPECTED_BODY_PAGES = {target}\nPAGE_TOLERANCE = {tol}\nFRONT_MATTER_PAGES = {front}\n')
  state_path=BASE/f'state-{target}.json';state_path.unlink(missing_ok=True);f.cmd_init(state_path,False)
  s=f.load_state(state_path)
- s['startup']={'sources':[dict(evidence(SOURCE),role='tender')], 'latest_updates':{'status':'confirmed_none','asked_at':'test','reply_text':'synthetic answer','reply_source':'synthetic record'},'critical_questions':[],'questions_review':'fixture review','batch_plan':{'count':1,'reason':'fixture','batches':['whole']},'word_channel':'unavailable','word_capability_evidence':'tests run without Word','real_photo_slots':[{'name':'现场现状','location':'第一章','basis':'fixture'}]}
+ s['startup']={'visual_policy':POLICY,'sources':[dict(evidence(SOURCE),role='tender')], 'latest_updates':{'status':'confirmed_none','asked_at':'test','reply_text':'synthetic answer','reply_source':'synthetic record'},'critical_questions':[],'questions_review':'fixture review','batch_plan':{'count':1,'reason':'fixture','batches':['whole']},'word_channel':'unavailable','word_capability_evidence':'tests run without Word','real_photo_slots':[{'name':'现场现状','location':'第一章','basis':'fixture'}]}
  reserve=5 if target>=200 else 2
  n=math.ceil((target-reserve)/f.planning_policy(target)['module_page_cap']);per=(target-reserve)/n
  mods=[];reqs=[]
@@ -95,7 +100,7 @@ def module_files(m):
  q2=('模块'+mid+'发现检查偏差时，按批准方案处理并复查，满足移交条件后进入后续工序，保留相应记录。')*2
  text=q1+'\n'+q2+'\n';text+=('本模块'+mid+'施工执行记录用于控制工序及接口。\n')*max(1,int((m['estimated_normal_chars']-len(f._normal(text)))/24))
  src=BASE/(mid+'.md');src.write_text(text)
- rv=BASE/(mid+'-review.json');write(rv,{'module_id':mid,'source_sha256':f.sha256(src),'covered_requirement_ids':m['requirement_ids'],'fact_sources_reviewed':True,'technical_depth_reviewed':True,'interfaces_reviewed':True,'repetition_reviewed':True,'conclusion':'synthetic review','construction_language_review':{'reviewed':True,'unresolved_count':0,'conclusion':'synthetic language judgment'},'scoring_review':{'conditions':[],'not_applicable_reason':'fixture requirements only; no tender scoring conditions','conclusion':'synthetic responsibility judgment'},'probe_quotes':[q1,q2]})
+ rv=BASE/(mid+'-review.json');write(rv,{'module_id':mid,'source_sha256':f.sha256(src),'covered_requirement_ids':m['requirement_ids'],'fact_sources_reviewed':True,'technical_depth_reviewed':True,'interfaces_reviewed':True,'repetition_reviewed':True,'conclusion':'synthetic review','technical_review':{'version':1,'checks':{k:{'status':'reviewed','conclusion':'fixture'} for k in f.TECHNICAL_REVIEW_ITEMS}},'construction_language_review':{'reviewed':True,'unresolved_count':0,'conclusion':'synthetic language judgment'},'scoring_review':{'conditions':[],'not_applicable_reason':'fixture requirements only; no tender scoring conditions','conclusion':'synthetic responsibility judgment'},'probe_quotes':[q1,q2]})
  return src,rv,[q1,q2]
 for m in s['plan']['modules']:
  src,rv,qs=module_files(m);MODULE_SOURCES[m['id']]=src;REVIEWS[m['id']]=rv;QUOTES[m['id']]=qs
@@ -144,7 +149,7 @@ pd.save(PARTIAL);check('Keeping probes but dropping substantive module content b
 original_report=CP75.read_bytes();CP75.write_bytes(original_report+b'\n')
 check('Changed stage Word report invalidates final readiness',f.cmd_final_ready(STATE,FINAL)==2);CP75.write_bytes(original_report)
 MISSING=BASE/'missing-module.docx';compose(MISSING,f._ids(s)[:-1]);check('Dropped final module blocked',f.cmd_final_ready(STATE,MISSING)==2)
-FORMAT.write_text(FORMAT.read_text()+'\n');check('Changing frozen pilot format invalidates sample',f.cmd_final_ready(STATE,FINAL)==2);write(FORMAT,{'font_rules':{},'required_level1_titles':[], 'required_figures':[{'name':n,'hard':True,'color_required':True} for n in c.FIGURE_NAMES], 'required_real_photo_slots':[{'name':'现场现状'}],'photo_delivery_stage':'draft'})
+FORMAT.write_text(FORMAT.read_text()+'\n');check('Changing frozen pilot format invalidates sample',f.cmd_final_ready(STATE,FINAL)==2);write(FORMAT,{'visual_policy':POLICY,'font_rules':{},'required_level1_titles':[], 'required_figures':[{'name':n,'hard':True,'color_required':True} for n in c.FIGURE_NAMES], 'required_real_photo_slots':[{'name':'现场现状'}],'photo_delivery_stage':'draft'})
 check('Restored identical pilot format returns valid evidence',f.cmd_final_ready(STATE,FINAL)==0)
 
 # Smaller/new project: same scripts, no forced long-document sample.

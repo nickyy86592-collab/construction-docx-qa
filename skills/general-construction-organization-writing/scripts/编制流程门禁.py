@@ -22,6 +22,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from visual_policy import visual_policy_errors, visual_policy_template
+
 STATE_DEFAULT = "篇幅规划状态.json"
 STAGES = (40, 75)
 PAGE_DIR = None
@@ -520,7 +522,8 @@ def startup_template():
     return {'sources': [], 'latest_updates': {'status':'unanswered','asked_at':'','reply_text':'','reply_source':''},
             'critical_questions':[], 'questions_review': '',
             'batch_plan': {'count':None,'reason':'','batches':[]},
-            'word_channel':'', 'word_capability_evidence':'', 'real_photo_slots':[]}
+            'word_channel':'', 'word_capability_evidence':'', 'real_photo_slots':[],
+            'visual_policy': visual_policy_template()}
 
 
 def startup_errors(state, base):
@@ -557,8 +560,10 @@ def startup_errors(state, base):
         errors.append('需预判一次完成能力并给出1至3批交付计划')
     if a.get('word_channel') not in ('local_word','github_runner','unavailable') or not a.get('word_capability_evidence'):
         errors.append('未记录可实际执行的Word通道/阻塞证据')
-    if not a.get('real_photo_slots') or any(not x.get('name') or not x.get('location') or not x.get('basis') for x in a.get('real_photo_slots',[])):
-        errors.append('实景图主题/插入位置/价值依据必须至少一项')
+    slots = a.get('real_photo_slots')
+    errors += visual_policy_errors(a.get('visual_policy'), slots)
+    if isinstance(slots, list) and any(not isinstance(x, dict) or not x.get('name') or not x.get('location') or not x.get('basis') for x in slots):
+        errors.append('已选实景图须登记主题、插入位置及价值依据')
     return errors
 
 
@@ -570,9 +575,65 @@ def emit_gate(errors, success):
     return 2 if errors else 0
 
 
+TECHNICAL_REVIEW_ITEMS = (
+    'applicability', 'constraints', 'number_basis',
+    'quantity_capacity_schedule_resources', 'issue_recheck',
+)
+REFERENCE_TARGET_ITEMS = (
+    'length_38000',
+    'numbers_6_per_1000', 'charts_15',
+)
+
+
+def technical_review_errors(record, final=False):
+    """Check execution records, never infer engineering quality or award points."""
+    review = record.get('technical_review')
+    if not isinstance(review, dict) or type(review.get('version')) is not int or review['version'] != 1:
+        return ['缺五项专业复核technical_review v1（复用原记录，不另开阶段）']
+    checks = review.get('checks')
+    errors = []
+    if not isinstance(checks, dict):
+        checks = {}
+    for key in TECHNICAL_REVIEW_ITEMS:
+        item = checks.get(key)
+        if not isinstance(item, dict) or item.get('status') not in ('reviewed', 'not_applicable') or not isinstance(item.get('conclusion'), str) or not item['conclusion'].strip():
+            errors.append('专业复核漏项或缺实际结论/不适用依据：' + key)
+    if final:
+        refs = review.get('reference_targets')
+        if not isinstance(refs, dict):
+            refs = {}
+        for key in REFERENCE_TARGET_ITEMS:
+            item = refs.get(key)
+            if not isinstance(item, dict) or item.get('status') not in ('met', 'adapted', 'not_met') or not isinstance(item.get('conclusion'), str) or not item['conclusion'].strip():
+                errors.append('经验参考未留采用/调整回应（数值本身不作门槛）：' + key)
+    return errors
+
+
+def handled_conflict_errors(item, body_text, base):
+    """A handled drafting conflict is not an official source reconciliation."""
+    errors = []
+    name = str(item.get('name'))
+    if item.get('handling') not in ('bill_primary', 'avoid_detail'):
+        errors.append('编制处置缺清单为主/收敛争议的明确方式：' + name)
+    if not all(isinstance(item.get(k), str) and item[k].strip() for k in ('source_status', 'decision', 'recheck')):
+        errors.append('编制处置缺原始资料状态、采用口径或关联复验：' + name)
+    evidence = item.get('occurrences') if 'occurrences' in item else item.get('evidence')
+    if not isinstance(evidence, list) or not evidence:
+        errors.append('编制处置缺真实来源证据：' + name)
+        evidence = []
+    if any(not isinstance(v, dict) or not v.get('locator') or not fresh_file(v, base) for v in evidence):
+        errors.append('编制处置来源文件/哈希/位置不完整：' + name)
+    if item.get('handling') == 'bill_primary' and not any(isinstance(v, dict) and v.get('role') == 'bill' and v.get('locator') and fresh_file(v, base) for v in evidence):
+        errors.append('清单口径缺role=bill的有效清单证据：' + name)
+    uses = item.get('body_locations')
+    if not isinstance(uses, list) or not uses or any(not isinstance(v, dict) or not v.get('location') or not v.get('quote') or v['quote'] not in body_text for v in uses):
+        errors.append('编制处置缺当前正文措施及定位：' + name)
+    return errors
+
+
 def validate_content_review(document, review_path):
     r = json.loads(review_path.read_text(encoding='utf-8'))
-    errors = []
+    errors = technical_review_errors(r, final=True)
     if r.get('document_sha256') != sha256(document):
         errors.append('内容核验记录不属于当前DOCX')
     entries = r.get('source_checks') or []
@@ -606,12 +667,18 @@ def validate_content_review(document, review_path):
         errors.append('未登记用于正文的关键参数及跨来源核对')
     for x in parameters or []:
         candidates=x.get('occurrences') or []
+        if x.get('kind') not in ('project_fact', 'standard_value', 'calculated', 'proposed'):
+            errors.append('关键参数未区分项目事实/规范值/计算/策划：'+str(x.get('name')))
+        if x.get('kind') == 'calculated' and not x.get('calculation'):
+            errors.append('计算参数缺公式、输入及单位依据：'+str(x.get('name')))
+        if x.get('kind') == 'proposed' and not x.get('feasibility_basis'):
+            errors.append('拟采用参数缺适用条件与可行性依据：'+str(x.get('name')))
         if not x.get('name') or not x.get('scope') or not x.get('cross_source_search') or not candidates:
             errors.append('关键参数跨来源搜索记录不足')
         for v in candidates:
             if v.get('value') is None or not all(v.get(k) for k in ('unit','scope','locator')) or not fresh_file(v,review_path.parent):
                 errors.append('关键参数候选值/部位/原图证据不完整：'+str(x.get('name')))
-        if x.get('status') not in ('consistent','resolved') or not x.get('decision') or not x.get('body_locations'):
+        if x.get('status') not in ('consistent','resolved','handled') or not x.get('decision') or not x.get('body_locations'):
             errors.append('关键参数未关闭或缺正文定位：'+str(x.get('name')))
         for use in x.get('body_locations') or []:
             if not isinstance(use,dict) or not use.get('location') or not use.get('quote') or use.get('quote') not in body_text:
@@ -626,17 +693,27 @@ def validate_content_review(document, review_path):
                 errors.append('正文参数与登记适用部位/候选值不匹配：'+str(x.get('name')))
         if x.get('status')=='resolved' and not x.get('resolution_evidence'):
             errors.append('参数冲突缺有效决定依据：'+str(x.get('name')))
+        if x.get('status') == 'handled':
+            errors += handled_conflict_errors(x, body_text, review_path.parent)
+            if x.get('handling') != 'bill_primary':
+                errors.append('正文已使用的数值不能以收敛争议代替取值依据：'+str(x.get('name')))
+            bill_values = {(str(v.get('value')),v.get('unit'),v.get('scope')) for v in candidates if v.get('role') == 'bill'}
+            for use in x.get('body_locations') or []:
+                if isinstance(use, dict) and (str(use.get('value')),use.get('unit'),use.get('scope')) not in bill_values:
+                    errors.append('正文处理值与有效清单口径不匹配：'+str(x.get('name')))
         # Differing values require an explicit scope/version resolution, not a generic PASS.
         values={(str(v.get('value')),v.get('unit')) for v in candidates}
-        if len(values)>1 and x.get('status')!='resolved':
+        if len(values)>1 and x.get('status') not in ('resolved','handled'):
             errors.append('不同候选值尚未解释适用部位/有效版本：'+str(x.get('name')))
     for x in r.get('conflicts',[]):
-        if x.get('status')!='resolved' or not x.get('evidence') or not x.get('decision'):
+        if x.get('status') == 'handled':
+            errors += handled_conflict_errors(x, body_text, review_path.parent)
+        elif x.get('status')!='resolved' or not x.get('evidence') or not x.get('decision'):
             errors.append('未关闭冲突：'+str(x.get('name')))
     if (r.get('construction_language_review') or {}).get('all_paragraphs_reviewed') is not True or not (r.get('construction_language_review') or {}).get('conclusion'):
         errors.append('未完成逐段施工执行语言复核')
     if any((r.get('visual_review') or {}).get(k) is not True for k in ('three_color_figures_reviewed','caption_photo_reviewed')) or not (r.get('visual_review') or {}).get('conclusion'):
-        errors.append('未完成彩色三图/照片框实际视觉复核')
+        errors.append('未完成按有效配色要求的三图、增补/替代示意图及适用照片框实际视觉复核')
     return errors, r
 
 
@@ -708,9 +785,9 @@ def cmd_delivery(a):
     if stage not in ('draft','final') or static.get('photo_delivery_stage')!=stage:
         errors.append('照片交付阶段未一致确认')
     slots=rules.get('required_real_photo_slots') or []
-    if not slots:
-        errors.append('实景图清单为空')
     if state:
+        if state['startup'].get('visual_policy') != rules.get('visual_policy'):
+            errors.append('启动与交付图文决策不一致；按当前有效要求同步更新项目判断及图件计划')
         expected={x['name'] for x in state['startup'].get('real_photo_slots',[])}
         if not expected.issubset({x.get('name') for x in slots}):
             errors.append('启动约定的照片主题被省略')
@@ -856,7 +933,7 @@ def module_requirements_digest(state,module):
 
 
 def module_review_errors(state,module,text,review,base):
-    errors=[]
+    errors=technical_review_errors(review)
     language=review.get('construction_language_review') or {}
     if language.get('reviewed') is not True or (type(language.get('unresolved_count')) is not int or language.get('unresolved_count') != 0) or not language.get('conclusion'):
         errors.append('模块施工语言未复核或仍有内部审查语言待处理')

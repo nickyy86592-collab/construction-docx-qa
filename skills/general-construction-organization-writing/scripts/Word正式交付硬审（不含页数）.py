@@ -47,6 +47,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from visual_policy import color_profile, planned_figure_names, visual_policy_errors
+
 
 # -----------------------------
 # Word 常量（避免依赖 makepy）
@@ -79,6 +81,7 @@ DEFAULT_RULES: Dict[str, Any] = {
     "required_level1_titles": None,
     "required_figures": None,
     "required_real_photo_slots": None,
+    "visual_policy": None,  # AI项目判断及提示词/AGENTS.md/招标例外，同启动记录一致
     "photo_delivery_stage": "draft",  # draft=允许占位；final=未替换的占位须阻断
     "font_rules": None,
     "low_content_page_char_threshold": 30,
@@ -828,6 +831,7 @@ def check_project_parameter_completeness(rules: Dict[str, Any]) -> CheckResult:
         "required_level1_titles": "招标文件一级章节要求",
         "required_figures": "招标文件/评分要求中的必要图件",
         "required_real_photo_slots": "实景图素材/占位需求",
+        "visual_policy": "项目照片判断、增补功能图及配色决策",
         "font_rules": "招标文件字体字号要求",
     }
     missing = [label for key, label in required_keys.items() if rules.get(key) is None]
@@ -858,20 +862,20 @@ def check_heading_level_presence(headings: List[Dict[str, Any]]) -> CheckResult:
         level = h.get("level")
         if level in counts:
             counts[level] += 1
-    missing = [level for level, count in counts.items() if count == 0]
-    if missing:
-        names = {1: "一级标题（第一章、第二章……）", 2: "二级标题（第一节、第二节……）", 3: "三级标题（一、二、三……）"}
-        return CheckResult(
-            "三级标题体系_层级完整性",
-            "FAIL",
-            "正文未实际形成完整的三级标题体系，缺少：" + "、".join(names[x] for x in missing) + "。",
-            {"counts": counts, "missing_levels": missing},
-        )
+    chapters = build_structure_counts(headings)
+    chapters_without_sections = [ch["title"] for ch in chapters if not ch["sections"]]
+    sections_without_subheadings = [
+        {"chapter": ch["title"], "section": sec["title"]}
+        for ch in chapters for sec in ch["sections"] if not sec["level3_count"]
+    ]
+    missing = [level for level, count in counts.items() if not count]
+    failed = bool(missing or chapters_without_sections or sections_without_subheadings)
     return CheckResult(
         "三级标题体系_层级完整性",
-        "PASS",
-        "正文已实际检测到一级、二级、三级三种标题层级。",
-        {"counts": counts},
+        "FAIL" if failed else "PASS",
+        "存在缺少下一级标题的章或节，或正文缺少标题层级。" if failed else "每章均有节，每节均有三级标题。",
+        {"counts": counts, "missing_levels": missing, "chapters_without_sections": chapters_without_sections,
+         "sections_without_subheadings": sections_without_subheadings},
     )
 
 
@@ -1658,6 +1662,9 @@ def _placeholder_has_visible_frame(doc, placeholder: str) -> bool:
 def check_real_photo_slots(doc, rules: Dict[str, Any]) -> List[CheckResult]:
     """草稿允许标注真实照片占位；最终版必须有真实照片的来源记录并在图注旁确有图片。"""
     raw = rules.get("required_real_photo_slots")
+    policy_errors = visual_policy_errors(rules.get('visual_policy'), raw, rules.get('required_figures'))
+    if policy_errors:
+        return [CheckResult('实景图项目决策', 'FAIL', '照片要求与项目决策不一致。', policy_errors)]
     if raw is None:
         return [CheckResult("实景图占位", "FAIL", "尚未确认本项目的真实照片需求，禁止将格式审查标记为PASS。")]
     if not isinstance(raw, list):
@@ -1668,6 +1675,10 @@ def check_real_photo_slots(doc, rules: Dict[str, Any]) -> List[CheckResult]:
     full = doc_full_text(doc)
     slots_found = RE_REAL_PHOTO_PLACEHOLDER.findall(full)
     out: List[CheckResult] = []
+    if not raw:
+        residual = bool(slots_found or '需插入现场照片' in full)
+        return [CheckResult('无实景图方案', 'FAIL' if residual else 'PASS',
+                            '无照片方案不得遗留照片占位。' if residual else '已按有效项目决策采用替代示意图或有依据地省略；不强制照片。')]
     if stage == "final" and slots_found:
         out.append(CheckResult("正式稿_遗留实景图占位", "FAIL", "正式提交稿仍存在未替换的实景图占位；须补齐真实照片，不得自行删框规避。", slots_found))
     elif stage == "draft":
@@ -1711,29 +1722,6 @@ def check_real_photo_slots(doc, rules: Dict[str, Any]) -> List[CheckResult]:
                                    {"nearby_image": has_photo, "source_record_present": bool(source_record)}))
     out.append(CheckResult("实景图_AI真实性", "WARN", "脚本不能从 DOCX 自动证明图片真实拍摄或验证来源，仍须核对原始照片/来源记录。"))
     return out
-
-
-def check_figure_caption_numbering(records: List[Dict[str, Any]], body_start: int) -> CheckResult:
-    """检查图题显式显示的图1、图2……是否随正文连续、唯一、非图X。"""
-    captions = []
-    faults = []
-    for rec in records:
-        if int(rec.get("page") or 0) < body_start:
-            continue
-        content = str(rec.get("text") or "").strip()
-        if re.match(r"^图\s*[XxＸ]\b", content):
-            faults.append({"page": rec.get("page"), "text": content[:80], "reason": "存在未确定编号图X"})
-            continue
-        m = re.match(r"^图\s*(\d+)\s*[ 　:：．.、-]+\s*(.+)$", content)
-        if not m:
-            continue
-        captions.append({"number": int(m.group(1)), "text": content[:100], "page": rec.get("page")})
-    for i, cap in enumerate(captions, 1):
-        if cap["number"] != i:
-            faults.append({"page": cap["page"], "text": cap["text"], "expected": i, "actual": cap["number"]})
-    if not captions:
-        return CheckResult("图号连续性", "WARN", "未识别到采用‘图1 图名’格式的图题，请核查 Word SEQ 域和实际图题编号。")
-    return CheckResult("图号连续性", "FAIL" if faults else "PASS", "图号存在跳号、重号或未定数字。" if faults else f"识别到{len(captions)}条图题且编号连续。", faults or {"count": len(captions)})
 
 
 def font_value_equal(actual: Any, expected: Any, numeric: bool = False) -> bool:
@@ -1873,7 +1861,6 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         results.extend(whitespace_checks)
         results.append(export_whitespace_evidence(doc, whitespace_evidence_pages, report_path, evidence_dir))
         results.extend(check_required_figures(doc, rules))
-        results.append(check_figure_caption_numbering(records, int(rules["body_start_page"])))
         results.extend(check_real_photo_slots(doc, rules))
         results.append(check_fonts(doc, records, rules))
 
@@ -1881,7 +1868,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         overall = "PASS" if not hard_failures else "FAIL"
 
         report = {
-            "audit_version": "1.9.0",
+            "audit_version": "1.11.0",
             "rules_sha256": rules_digest(rules),
             "photo_delivery_stage": rules.get("photo_delivery_stage"),
             "layout_engine": "Microsoft Word",
@@ -1975,15 +1962,50 @@ def _docx_blocks(path):
     ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
           'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
           'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'}
+    w = '{' + ns['w'] + '}'
     blocks = []
+
+    def body_blocks(parent):
+        for child in parent:
+            if child.tag in (w + 'p', w + 'tbl'):
+                yield child
+            elif child.tag in (w + 'sdt', w + 'sdtContent', w + 'customXml'):
+                yield from body_blocks(child)
+
     with zipfile.ZipFile(path) as z:
         rels = ET.fromstring(z.read('word/_rels/document.xml.rels'))
         targets = {r.get('Id'): r.get('Target') for r in rels if r.get('TargetMode') != 'External'}
+        styles = ET.fromstring(z.read('word/styles.xml')) if 'word/styles.xml' in z.namelist() else ET.Element('styles')
+        style_nodes = {s.get(w + 'styleId'): s for s in styles.findall('w:style', ns)}
+        style_info = {}
+        for style_id, node in style_nodes.items():
+            outline = None
+            caption_style = False
+            seen = set()
+            while node is not None and node not in seen:
+                seen.add(node)
+                level = node.find('w:pPr/w:outlineLvl', ns)
+                if level is not None and outline is None:
+                    outline = int(level.get(w + 'val')) + 1
+                name = node.find('w:name', ns)
+                caption_style |= name is not None and name.get(w + 'val', '').lower() in ('caption', '题注')
+                parent = node.find('w:basedOn', ns)
+                node = style_nodes.get(parent.get(w + 'val')) if parent is not None else None
+            style_info[style_id] = (outline, caption_style)
+
         body = ET.fromstring(z.read('word/document.xml')).find('w:body', ns)
-        for el in body:
-            if el.tag.rsplit('}', 1)[-1] not in ('p', 'tbl'):
-                continue
+        table_index = 0
+        for el in body_blocks(body):
             text = ''.join(x.text or '' for x in el.findall('.//w:t', ns))
+            is_table = el.tag == w + 'tbl'
+            rows = el.findall('w:tr', ns)
+            if is_table:
+                table_index += 1
+            style = el.find('w:pPr/w:pStyle', ns)
+            outline, caption_style = style_info.get(style.get(w + 'val') if style is not None else None, (None, False))
+            level = el.find('w:pPr/w:outlineLvl', ns)
+            if level is not None:
+                outline = int(level.get(w + 'val')) + 1
             images = []
             for blip in el.findall('.//a:blip', ns):
                 rid = blip.get('{'+ns['r']+'}embed')
@@ -1995,8 +2017,94 @@ def _docx_blocks(path):
             borders = el.findall('.//w:tblBorders/*', ns) + el.findall('.//w:tcBorders/*', ns)
             framed = any(b.get('{'+ns['w']+'}val') not in (None, 'nil', 'none') for b in borders)
             heights = [float(x.get('{'+ns['w']+'}val', '0'))/20 for x in el.findall('.//w:trHeight', ns)]
-            blocks.append({'text': text, 'images': images, 'framed': framed, 'height_pt': max(heights, default=0)})
+            drawing_count = len(el.findall('.//w:drawing', ns) or el.findall('.//w:pict', ns))
+            blocks.append({
+                'text': text, 'images': images, 'framed': framed, 'height_pt': max(heights, default=0),
+                'outline': outline, 'caption_style': caption_style, 'table_index': table_index if is_table else None,
+                'drawing_count': drawing_count,
+                'photo_frame': len(rows) == 1 and len(rows[0].findall('w:tc', ns)) == 1
+                and bool(RE_REAL_PHOTO_PLACEHOLDER.search(text)),
+            })
     return blocks
+
+
+def _caption_match(text, label):
+    return re.fullmatch(rf'{label}\s*([1-9][0-9]*)[\s:：]+(\S.*)', text.strip())
+
+
+def check_caption_numbering(blocks, rules):
+    """Bind each figure or data table to its own caption in document order."""
+    table_kinds = {item['index']: item.get('kind', 'data') for item in table_layout(rules).get('tables', [])}
+    objects = {'图': [], '表': []}
+    for i, block in enumerate(blocks):
+        table_index = block['table_index']
+        if table_index is None:
+            if block['drawing_count']:
+                objects['图'].append(i)
+            continue
+        kind = table_kinds.get(table_index, 'data')
+        picture_only = table_index not in table_kinds and not block['text'].strip()
+        if block['photo_frame'] or (block['drawing_count'] and (kind in ('figure', 'photo') or picture_only)):
+            objects['图'].append(i)
+        elif kind == 'data':
+            objects['表'].append(i)
+
+    object_indices = set(objects['图']) | set(objects['表'])
+    results = []
+    for label, preferred_step in (('图', 1), ('表', -1)):
+        captions = {
+            i: match
+            for i, block in enumerate(blocks)
+            if block['table_index'] is None and block['outline'] not in (1, 2, 3)
+            and (match := _caption_match(block['text'], label))
+        }
+        attached = {}
+        used = set()
+        if label == '图':
+            for i in objects[label]:
+                if i in captions:
+                    attached[i] = i
+                    used.add(i)
+        for step in (preferred_step, -preferred_step):
+            for i in objects[label]:
+                if i in attached:
+                    continue
+                j = i + step
+                while (0 <= j < len(blocks) and blocks[j]['table_index'] is None
+                       and not blocks[j]['drawing_count'] and not blocks[j]['text'].strip()):
+                    j += step
+                if j in captions and j not in used and j not in object_indices:
+                    attached[i] = j
+                    used.add(j)
+
+        faults = []
+        for expected, i in enumerate(objects[label], 1):
+            if label == '图' and blocks[i]['drawing_count'] > 1:
+                faults.append({'block': i + 1, 'expected': expected,
+                               'reason': '同一图件位置含多个独立绘图对象，需分别编号或先合成一幅组合图'})
+            if i not in attached:
+                faults.append({'block': i + 1, 'table': blocks[i]['table_index'], 'expected': expected,
+                               'reason': f'缺少相邻的{label}题或未显示有效数字'})
+                continue
+            j = attached[i]
+            actual = int(captions[j][1])
+            if actual != expected:
+                faults.append({'block': j + 1, 'text': blocks[j]['text'][:100], 'expected': expected, 'actual': actual})
+        for i, block in enumerate(blocks):
+            value = block['text'].strip()
+            placeholder = re.match(rf'^{label}\s*[XxＸｘ]+(?:$|[\s:：．.、-])', value)
+            if i not in used and (placeholder or (block['caption_style'] and value.startswith(label))):
+                faults.append({'block': i + 1, 'text': value[:100], 'reason': f'{label}题未编号或未对应独立对象'})
+        numbers = [int(captions[i][1]) for i in sorted(used)]
+        if numbers != list(range(1, len(numbers) + 1)) and not faults:
+            faults.append({'numbers': numbers, 'reason': f'{label}题在正文中未按出现顺序编号'})
+        results.append(CheckResult(
+            f'静态{label}号连续性', 'FAIL' if faults else 'PASS',
+            f'{label}题与对象须逐一对应并按正文顺序从1连续编号。' if faults
+            else f'已核对{len(objects[label])}个{label}及其连续编号。',
+            faults or {'count': len(objects[label])},
+        ))
+    return results
 
 
 def _caption_images(blocks, index):
@@ -2010,7 +2118,7 @@ def _caption_images(blocks, index):
             if not 0 <= j < len(blocks):
                 break
             b = blocks[j]
-            if re.match(r'^图\s*\d+\s', b['text']) or RE_L1.match(b['text']) or RE_L2.match(b['text']):
+            if _caption_match(b['text'], '图') or RE_L1.match(b['text']) or RE_L2.match(b['text']):
                 break
             if b['images']:
                 return b['images']
@@ -2046,68 +2154,79 @@ def _color_metrics(raw):
 
 def portable_checks(document, rules):
     blocks = _docx_blocks(document)
-    out = []
+    body_start = next((i for i, block in enumerate(blocks)
+                       if block['outline'] == 1 and classify_heading(block['text'].strip(), rules)[0] == 1), 0)
+    body_blocks = blocks[body_start:]
+    headings = [dict(block, level=block['outline']) for block in body_blocks
+                if block['outline'] in (1, 2, 3) and block['text'].strip()]
+    structure = check_heading_level_presence(headings)
+    out = [CheckResult('静态' + structure.name, structure.status, structure.message, structure.details)]
+    out.extend(check_caption_numbering(body_blocks, rules))
     configured = rules.get('required_figures')
-    if not isinstance(configured, list):
-        configured = []
-    caption_ids = []
+    policy = rules.get('visual_policy')
+    policy_errors = visual_policy_errors(policy, rules.get('required_real_photo_slots'), configured)
+    if policy_errors:
+        return out + [CheckResult('项目图文决策', 'FAIL', '项目照片/配色/功能图安排尚未满足要求。', policy_errors)]
+    out.append(CheckResult('项目图文决策', 'PASS', '已核对项目判断、特殊要求依据及图件计划；专业价值仍须实际审查。'))
     used = set()
-    for name in FIGURE_NAMES:
-        item = next((x for x in configured if x.get('name') == name), None)
-        if not item or item.get('hard') is not True or item.get('color_required') is not True:
-            out.append(CheckResult('彩色图规则_'+name, 'FAIL', '必备图必须配置hard=true及color_required=true。'))
-        indices = [i for i,b in enumerate(blocks) if re.match(r'^图\s*\d+\s', b['text']) and name in b['text']]
+    profile = color_profile(policy)
+    names = list(dict.fromkeys(planned_figure_names(policy) + [x['name'] for x in configured if x.get('hard') is True]))
+    for name in names:
+        item = next(x for x in configured if x.get('name') == name)
+        indices = [i for i,b in enumerate(blocks) if _caption_match(b['text'], '图') and name in b['text']]
         if len(indices) != 1:
             out.append(CheckResult('嵌入彩图_'+name, 'FAIL', '须有唯一的正式图题和实际嵌入图。', {'captions': len(indices)}))
             continue
-        pics = _caption_images(blocks, indices[0])
+        index = indices[0]
+        pics = _caption_images(blocks, index)
         if len(pics) != 1:
             out.append(CheckResult('嵌入彩图_'+name, 'FAIL', '图题旁须有一张可定位的独立嵌入图片；复杂矢量对象先导出PNG再嵌入。'))
             continue
         pic = pics[0]
         digest = hashlib.sha256(pic['bytes']).hexdigest()
         if digest in used:
-            out.append(CheckResult('三图独立_'+name, 'FAIL', '三种图不能共用同一图片。'))
+            out.append(CheckResult('图件独立_'+name, 'FAIL', '不同功能图不能共用同一图片充数。'))
         used.add(digest)
         try:
             metrics = _color_metrics(pic['bytes'])
-            color_ok = metrics['color_ratio'] >= .01 and metrics['foreground_color_ratio'] >= .04 and metrics['hue_groups'] >= 2
+            color_ok = (profile['min_color_ratio'] <= metrics['color_ratio'] <= profile['max_color_ratio']
+                        and metrics['foreground_color_ratio'] >= profile['min_foreground_color_ratio']
+                        and metrics['hue_groups'] >= profile['min_hue_groups'])
             portrait_ok = metrics['width'] <= metrics['height']
             out.append(CheckResult('彩图配色_'+name, 'PASS' if color_ok else 'FAIL',
-                '嵌入图片符合基础彩色比例及多色系检测；主体视觉仍须人工核对。' if color_ok else '黑灰图、彩色比例过低或色系不足；需重绘主体配色。', {**metrics,'image_sha256':digest}))
+                '实际嵌入图符合有效配色规则；主体视觉仍须人工核对。' if color_ok else '实际嵌入图不符合当前配色决策及阈值。',
+                {**metrics, 'image_sha256':digest, 'color_mode':policy['color_figures']['mode']}))
             out.append(CheckResult('图件竖向_'+name, 'PASS' if portrait_ok else 'FAIL', '图件须按竖向画布组织。', metrics))
         except Exception as e:
             out.append(CheckResult('彩图配色_'+name, 'FAIL', '无法检测嵌入图片颜色，不能当作通过：'+str(e)))
-    for b in blocks:
-        m = re.match(r'^图\s*(\d+)\s', b['text'])
-        if m:
-            caption_ids.append(int(m[1]))
-    out.append(CheckResult('静态图号连续性', 'PASS' if caption_ids and caption_ids == list(range(1,len(caption_ids)+1)) else 'FAIL', '图题缓存须从图1连续显示。',caption_ids))
+        if name not in FIGURE_NAMES:
+            anchor = item.get('context_anchor', '')
+            neighbours = ''.join(b['text'] for j,b in enumerate(blocks[max(0,index-4):index+5], max(0,index-4))
+                                 if j != index and not _caption_match(b['text'], '图'))
+            linked = isinstance(anchor, str) and len(re.sub(r'\s+', '', anchor)) >= 20 and anchor in neighbours
+            out.append(CheckResult('功能图正文衔接_'+name, 'PASS' if linked else 'FAIL',
+                '已找到图旁实际说明原文，仍须审查逻辑和技术价值。' if linked else '功能图须与相邻正文衔接，context_anchor至少20个非空白字符且真实存在。',
+                {'location':item.get('location'), 'purpose':item.get('purpose')}))
     photo_slots = rules.get('required_real_photo_slots')
-    if not isinstance(photo_slots, list) or not photo_slots:
-        out.append(CheckResult('实景图必有', 'FAIL', '实景图清单必须至少一项，缺素材必须占位。'))
-    else:
-        stage = rules.get('photo_delivery_stage')
-        if stage not in ('draft','final'):
-            out.append(CheckResult('照片交付阶段','FAIL','必须明确draft/final。'))
-        if stage == 'final' and any('需插入现场照片' in b['text'] or RE_REAL_PHOTO_PLACEHOLDER.search(b['text']) for b in blocks):
-            out.append(CheckResult('正式稿占位残留','FAIL','正式稿不得保留任何照片占位。'))
-        for item in photo_slots:
-            name = str(item.get('name','')).strip()
-            if not name:
-                out.append(CheckResult('照片配置','FAIL','照片主题名不能为空。'))
-                continue
-            placeholders = [b for b in blocks if ('【实景图占位：'+name+'】') in b['text']]
-            if stage == 'draft' and placeholders:
-                valid = len(placeholders)==1 and placeholders[0]['framed'] and placeholders[0]['height_pt'] >= 50 and '需插入现场照片' in placeholders[0]['text']
-                out.append(CheckResult('照片占位_'+name,'PASS' if valid else 'FAIL','占位须唯一、有可见边框、至少50pt预留高度并标注需插入现场照片。'))
-            else:
-                indices = [i for i,b in enumerate(blocks) if re.match(r'^图\s*\d+\s',b['text']) and name in b['text']]
-                pics = _caption_images(blocks,indices[0]) if len(indices)==1 else []
-                expected_hash = item.get('image_sha256')
-                actual_hashes = [hashlib.sha256(p['bytes']).hexdigest() for p in pics]
-                valid = bool(item.get('replaced') is True and item.get('source_record') and item.get('source_verified') is True and expected_hash in actual_hashes)
-                out.append(CheckResult('真实照片_'+name,'PASS' if valid else 'FAIL','实景图片须邻接图题、绑定嵌入图片哈希、有来源并完成真实性人工核验。'))
+    stage = rules.get('photo_delivery_stage')
+    if stage not in ('draft','final'):
+        out.append(CheckResult('照片交付阶段','FAIL','必须明确draft/final。'))
+    residual = any('需插入现场照片' in b['text'] or RE_REAL_PHOTO_PLACEHOLDER.search(b['text']) for b in blocks)
+    if residual and (stage == 'final' or not photo_slots):
+        out.append(CheckResult('正式稿或无照片方案占位残留','FAIL','正式稿或无照片方案不得保留照片占位。'))
+    for item in photo_slots:
+        name = item['name']
+        placeholders = [b for b in blocks if ('【实景图占位：'+name+'】') in b['text']]
+        if stage == 'draft' and placeholders:
+            valid = len(placeholders)==1 and placeholders[0]['framed'] and placeholders[0]['height_pt'] >= 50 and '需插入现场照片' in placeholders[0]['text']
+            out.append(CheckResult('照片占位_'+name,'PASS' if valid else 'FAIL','占位须唯一、有可见边框、至少50pt预留高度并标注需插入现场照片。'))
+        else:
+            indices = [i for i,b in enumerate(blocks) if _caption_match(b['text'], '图') and name in b['text']]
+            pics = _caption_images(blocks,indices[0]) if len(indices)==1 else []
+            expected_hash = item.get('image_sha256')
+            actual_hashes = [hashlib.sha256(p['bytes']).hexdigest() for p in pics]
+            valid = bool(item.get('replaced') is True and item.get('source_record') and item.get('source_verified') is True and expected_hash in actual_hashes)
+            out.append(CheckResult('真实照片_'+name,'PASS' if valid else 'FAIL','实景图片须邻接图题、绑定嵌入图片哈希、有来源并完成真实性人工核验。'))
     out.extend(language_checks(document_language_records(document)))
     out.extend(check_toc_layout_static(document,rules))
     out.extend(check_table_layout_static(document,rules))
@@ -2118,7 +2237,7 @@ def static_audit(document, rules_path, report_path,page_dir=None):
     rules = load_rules(rules_path,page_dir)
     results = portable_checks(document, rules)
     overall = 'FAIL' if any(x.status=='FAIL' for x in results) else 'PASS'
-    report = {'audit_version':'1.9.0', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
+    report = {'audit_version':'1.11.0', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
               'rules_sha256':rules_digest(rules), 'photo_delivery_stage':rules.get('photo_delivery_stage'),
               'delivery_status':overall, 'checks':[asdict(x) for x in results],
               'notes':['静态核验不使用Word，不能证明实际页数、版式、照片真实性或技术参数正确。']}
@@ -2132,7 +2251,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="通用 Word 正式交付硬审脚本（不含页数目标审核）")
     p.add_argument("document", type=Path, help="待审 Word 文件路径")
     p.add_argument("--page-dir",type=Path,default=None,help="当前唯一项目页数脚本目录，自动派生正文页定位")
-    p.add_argument("--static-only", action="store_true", help="跨平台静态检测嵌入彩图/照片框/图号/内部语言，不代表Word版式验收")
+    p.add_argument("--static-only", action="store_true", help="跨平台静态检测标题层级、图表编号、嵌入彩图、照片框及内部语言，不代表Word版式验收")
     p.add_argument("--rules", type=Path, default=None, help="项目规则 JSON（可选）")
     p.add_argument("--report", type=Path, default=None, help="审查报告 JSON 输出路径（可选）")
     p.add_argument("--evidence-dir", type=Path, default=None, help="彩图留白异常页证据输出目录（可选；默认与报告同目录）")

@@ -2,6 +2,7 @@
 from pathlib import Path
 import argparse,copy,importlib.util,json,sys,tempfile,contextlib,io
 COMMON=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(COMMON))
 def load(name,file):
  spec=importlib.util.spec_from_file_location(name,COMMON/file);m=importlib.util.module_from_spec(spec);sys.modules[name]=m;spec.loader.exec_module(m);return m
 c=load('upgrade_word','Word正式交付硬审（不含页数）.py');f=load('upgrade_flow','编制流程门禁.py');score=load('upgrade_score','评分响应核验.py')
@@ -65,7 +66,7 @@ def portable(base):
  req={'id':'R1','scope':src.read_text(),'scoring':True,'evidence':[ev]};mod={'id':'M1','requirement_ids':['R1']};state={'plan':{'requirements':[req],'modules':[mod,{'id':'M2','requirement_ids':[]}]}}
  text='先核验工作面与设计接口，按批准工艺逐段实施，检查合格并记录后移交下道工序。'
  condition={'requirement_id':'R1','criterion_quote':req['scope'],'response_quote':text,'evidence':[ev],'targeted':True,'technical_depth':True,'project_basis':True,'substantive_response':True,'status':'satisfied','conclusion':'当前模块实际措施满足对应子条件；合成判断'}
- review={'construction_language_review':{'reviewed':True,'unresolved_count':0,'conclusion':'施工语言核查'},'scoring_review':{'conditions':[condition],'conclusion':'本模块责任复核'}}
+ review={'technical_review':{'version':1,'checks':{k:{'status':'reviewed','conclusion':'fixture'} for k in f.TECHNICAL_REVIEW_ITEMS}},'construction_language_review':{'reviewed':True,'unresolved_count':0,'conclusion':'施工语言核查'},'scoring_review':{'conditions':[condition],'conclusion':'本模块责任复核'}}
  check('scoring module review no forced score',not f.module_review_errors(state,mod,text,review,base))
  for name,mut in [('missing criterion',lambda x:x['scoring_review'].update(conditions=[])),('insufficient depth',lambda x:x['scoring_review']['conditions'][0].update(technical_depth=False)),('invented response',lambda x:x['scoring_review']['conditions'][0].update(response_quote='这段话不存在于当前实际模块中，不能作为对应技术措施的证明')),('missing source',lambda x:x['scoring_review']['conditions'][0]['evidence'][0].update(sha256='old')),('unfinished language',lambda x:x['construction_language_review'].update(unresolved_count=1)),('forced score',lambda x:x['scoring_review']['conditions'][0].update(self_score=9))]:
   bad=copy.deepcopy(review);mut(bad);check(name+' blocked',bool(f.module_review_errors(state,mod,text,bad,base)))

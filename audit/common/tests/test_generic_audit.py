@@ -9,12 +9,13 @@ COMMON=Path(__file__).resolve().parents[1]
 import tempfile,shutil
 _temporary=tempfile.TemporaryDirectory()
 ROOT=Path(_temporary.name)/'skill';(ROOT/'scripts').mkdir(parents=True)
-for name in ('Word正式交付硬审（不含页数）.py','编制流程门禁.py','评分响应核验.py'):
+for name in ('Word正式交付硬审（不含页数）.py','编制流程门禁.py','评分响应核验.py','visual_policy.py'):
     shutil.copy2(COMMON/name,ROOT/'scripts'/name)
 active_pages=list((COMMON.parents[1]/'input/project').glob('*页数硬审*.py'))
 assert len(active_pages)==1,'One active project page script is required'
 shutil.copy2(active_pages[0],ROOT/'scripts'/active_pages[0].name)
 OUT=Path(_temporary.name)/'tests';OUT.mkdir()
+sys.path.insert(0,str(ROOT/'scripts'))
 def load(name,file):
  spec=importlib.util.spec_from_file_location(name,ROOT/'scripts'/file);m=importlib.util.module_from_spec(spec);sys.modules[name]=m;spec.loader.exec_module(m);return m
 c=load('common','Word正式交付硬审（不含页数）.py');f=load('flow','编制流程门禁.py')
@@ -22,12 +23,20 @@ names=c.FIGURE_NAMES
 TARGET=f.discover_page_script()[1]['EXPECTED_BODY_PAGES']
 TOLERANCE=f.discover_page_script()[1]['PAGE_TOLERANCE']
 FRONT=f.discover_page_script()[1]['FRONT_MATTER_PAGES']
-rules={'required_figures':[{'name':n,'keywords':[n],'hard':True,'color_required':True} for n in names],'required_real_photo_slots':[{'name':'现场沟塘'}],'photo_delivery_stage':'draft','font_rules':{},'required_level1_titles':[]}
+policy={'version':1,
+        'real_photos':{'decision':'required','reason':'Synthetic fixture photo','replacement_figures':[]},
+        'color_figures':{'mode':'color'},
+        'additional_figures':{'names':[],'reason':'Isolate the three legacy diagrams',
+                              'override':{'source_type':'prompt','source_ref':'synthetic fixture','quote':'Only test the base diagrams'}}}
+rules={'visual_policy':policy,'required_figures':[{'name':n,'keywords':[n],'hard':True,'color_required':True} for n in names],'required_real_photo_slots':[{'name':'现场沟塘'}],'photo_delivery_stage':'draft','font_rules':{},'required_level1_titles':[]}
 def make_doc(path, gray=False,photo=True,editorial=False,same=False,border=True,frame_text=True):
  d=Document();d.add_paragraph('测试项目施工组织设计');toc=d.add_paragraph('第一章 施工部署\t2')
  from docx.enum.text import WD_TAB_ALIGNMENT,WD_TAB_LEADER
  toc.paragraph_format.tab_stops.add_tab_stop(Inches(6),WD_TAB_ALIGNMENT.RIGHT,WD_TAB_LEADER.DOTS)
- d.add_heading('第一章 施工部署',level=1);d.add_paragraph('路面强度按4.5MPa进行材料报审。')
+ d.add_heading('第一章 施工部署',level=1)
+ d.add_heading('第一节 材料进场与工序准备',level=2)
+ d.add_heading('一、路面材料报审',level=3)
+ d.add_paragraph('路面强度按4.5MPa进行材料报审。')
  for i,n in enumerate(names):
   im=Image.new('RGB',(600,900),'white');dr=ImageDraw.Draw(im)
   for j,col in enumerate(['#228bcc','#d94235','#38a76c']):dr.rectangle((70,70+j*200,530,220+j*200), fill='gray' if gray else col)
@@ -63,6 +72,11 @@ expect('静态CLI及文件哈希报告通过',rc.returncode==0 and json.loads((O
 statepath=OUT/'state.json'
 source=OUT/'source.txt';source.write_text('Synthetic test source: general 4.5 MPa, detail 4.0 MPa. Not project evidence.')
 review={'document_sha256':f.sha256(passdoc),'source_checks':[{'item':n,'status':'verified','conclusion':'synthetic','evidence':[{'path':str(source),'sha256':f.sha256(source),'locator':'synthetic lines'}]} for n in f.REVIEW_ITEMS], 'latest_confirmation':{'confirmed_at':'test','reply_source':'test','conclusion':'test'},'parameters':[{'name':'强度','scope':'路面','cross_source_search':'说明和结构图','occurrences':[{'path':str(source),'sha256':f.sha256(source),'locator':'test1','value':4.5,'unit':'MPa','scope':'路面'},{'path':str(source),'sha256':f.sha256(source),'locator':'test2','value':4.0,'unit':'MPa','scope':'入户道路'}],'status':'consistent','decision':'test','body_locations':[{'location':'第一章','quote':'路面强度按4.5MPa进行材料报审。','value':4.5,'unit':'MPa','scope':'路面'}]}], 'conflicts':[], 'construction_language_review':{'all_paragraphs_reviewed':True,'conclusion':'test'},'visual_review':{'three_color_figures_reviewed':True,'caption_photo_reviewed':True,'conclusion':'test'}}
+review['parameters'][0]['kind']='project_fact'
+review['technical_review']={'version':1,'checks':{k:{'status':'reviewed','conclusion':'synthetic'}
+                                                      for k in f.TECHNICAL_REVIEW_ITEMS},
+                            'reference_targets':{k:{'status':'adapted','conclusion':'synthetic'}
+                                                 for k in f.REFERENCE_TARGET_ITEMS}}
 rp=OUT/'review.json';rp.write_text(json.dumps(review));expect('4.5及4.0差异未解释被拦截',bool(f.validate_content_review(passdoc,rp)[0]))
 review['parameters'][0].update(status='resolved',resolution_evidence='Synthetic scenario: differing scopes reviewed');rp.write_text(json.dumps(review));expect('有部位解释的溯源结构通过',not f.validate_content_review(passdoc,rp)[0])
 bad=copy.deepcopy(review);bad['parameters'][0]['body_locations'][0]['quote']='正文不存在的证据';rp.write_text(json.dumps(bad));expect('虚构正文参数引用被拦截',bool(f.validate_content_review(passdoc,rp)[0]))
@@ -104,7 +118,7 @@ expect('伪改静态报告仍不能让占位冒充正式照片',f.cmd_delivery(a
 
 source.write_text(source.read_text()+' version changed');expect('来源文件改变使旧内容核验失效',bool(f.validate_content_review(passdoc,rp)[0]))
 # No-page deployment must still block absent startup.
-np=OUT/'no-page';np.mkdir(exist_ok=True);(np/'编制流程门禁.py').write_text((ROOT/'scripts/编制流程门禁.py').read_text())
+np=OUT/'no-page';np.mkdir(exist_ok=True);(np/'编制流程门禁.py').write_text((ROOT/'scripts/编制流程门禁.py').read_text());shutil.copy2(ROOT/'scripts/visual_policy.py',np/'visual_policy.py')
 rc=subprocess.run([sys.executable,str(np/'编制流程门禁.py'),'--state',str(np/'state.json'),'init'],capture_output=True);expect('无页数脚本仍初始化启动门禁',rc.returncode==2 and (np/'state.json').exists())
 rc=subprocess.run([sys.executable,str(np/'编制流程门禁.py'),'--state',str(np/'state.json'),'preflight'],capture_output=True);expect('无页数脚本不能绕过启动质询',rc.returncode==2)
 print(json.dumps({'passed':len(results),'tests':results,'limits':['Synthetic fixtures only; Windows Word not executed.']},ensure_ascii=False,indent=2))
@@ -133,6 +147,55 @@ rc=subprocess.run([sys.executable,str(ROOT/'scripts/编制流程门禁.py'),'pag
 expect('Automatic page-rule CLI sees renamed replacement',rc.returncode==0 and json.loads(rc.stdout)['body_pages_target']==80)
 rc=subprocess.run([sys.executable,str(ROOT/'scripts/编制流程门禁.py'),'run-page-audit','--document',str(passdoc),'--stage','40','--report',str(OUT/'unavailable-word.json')],capture_output=True,text=True)
 expect('Non-Windows cannot fake actual Word stage measurement',rc.returncode==3)
+# Structural regressions use actual DOCX blocks and visible caption caches.
+def structural_checks(doc, name):
+ path=OUT/(name+'.docx')
+ doc.save(path)
+ # Isolate structure checks so these cases do not rerun unrelated pixel analysis.
+ check_rules=c.load_rules(None)|rules|{'visual_policy':None}
+ return {x.name:x for x in c.portable_checks(path,check_rules)
+         if x.name in ('静态三级标题体系_层级完整性','静态图号连续性','静态表号连续性')}
+
+def numbered_tables(first='表1 进场材料',second='表2 使用计划'):
+ doc=Document(passdoc)
+ doc.add_heading('第二节 材料供应安排',level=2)
+ doc.add_heading('一、材料进场批次',level=3)
+ doc.add_heading('二、材料使用计划',level=3)
+ for title in (first,second):
+  if title is not None:doc.add_paragraph(title,style='Caption')
+  doc.add_table(rows=1,cols=2).cell(0,0).text='材料'
+ return doc
+
+good=structural_checks(numbered_tables(),'numbered-tables')
+expect('逐章逐节覆盖，三级标题数量可因节而异',
+       good['静态三级标题体系_层级完整性'].status=='PASS')
+expect('图表独立顺排，照片占位只计图号',
+       good['静态图号连续性'].details['count']==4 and good['静态表号连续性'].details['count']==2)
+for name,first,second in [('表题缺失','表1 进场材料',None),('表号重号','表1 进场材料','表1 使用计划'),
+                          ('表号跳号','表1 进场材料','表3 使用计划'),('表号倒序','表2 进场材料','表1 使用计划'),
+                          ('表号为占位符','表1 进场材料','表X 使用计划')]:
+ expect(name,structural_checks(numbered_tables(first,second),name)['静态表号连续性'].status=='FAIL')
+
+doc=numbered_tables()
+doc.add_heading('第三节 材料验收',level=2)
+doc.add_heading('第二章 施工进度',level=1)
+result=structural_checks(doc,'missing-parent-children')['静态三级标题体系_层级完整性']
+expect('全文已有三级标题仍逐项拒绝缺子级的章和节',
+       result.status=='FAIL' and result.details['chapters_without_sections']==['第二章 施工进度']
+       and result.details['sections_without_subheadings']==[{'chapter':'第一章 施工部署','section':'第三节 材料验收'}])
+for name,caption in [('额外图缺题',None),('图号重号','图4 材料运输'),('图号跳号','图6 材料运输')]:
+ doc=Document(passdoc)
+ doc.add_picture(str(OUT/'color0.png'),width=Inches(2))
+ if caption:doc.add_paragraph(caption)
+ expect(name,structural_checks(doc,name)['静态图号连续性'].status=='FAIL')
+
+doc=Document(passdoc)
+paragraph=doc.add_paragraph()
+for image in ('color0.png','color1.png'):
+ paragraph.add_run().add_picture(str(OUT/image),width=Inches(2))
+doc.add_paragraph('图5 材料运输')
+expect('两幅独立图共用图题被拦截',structural_checks(doc,'shared-figure-caption')['静态图号连续性'].status=='FAIL')
+
 manifest=json.loads((COMMON/'skill_version.json').read_text())
 expect('Generic scripts match exact synced skill bytes',all(hashlib.sha256((COMMON/n).read_bytes()).hexdigest()==h for n,h in manifest['common_files_sha256'].items()))
 print(json.dumps({'total_passed':len(results),'scope':'portable and interface tests; no Windows Word execution'},ensure_ascii=False))
