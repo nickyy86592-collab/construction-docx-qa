@@ -72,6 +72,8 @@ expect('静态CLI及文件哈希报告通过',rc.returncode==0 and json.loads((O
 statepath=OUT/'state.json'
 source=OUT/'source.txt';source.write_text('Synthetic test source: general 4.5 MPa, detail 4.0 MPa. Not project evidence.')
 review={'document_sha256':f.sha256(passdoc),'source_checks':[{'item':n,'status':'verified','conclusion':'synthetic','evidence':[{'path':str(source),'sha256':f.sha256(source),'locator':'synthetic lines'}]} for n in f.REVIEW_ITEMS], 'latest_confirmation':{'confirmed_at':'test','reply_source':'test','conclusion':'test'},'parameters':[{'name':'强度','scope':'路面','cross_source_search':'说明和结构图','occurrences':[{'path':str(source),'sha256':f.sha256(source),'locator':'test1','value':4.5,'unit':'MPa','scope':'路面'},{'path':str(source),'sha256':f.sha256(source),'locator':'test2','value':4.0,'unit':'MPa','scope':'入户道路'}],'status':'consistent','decision':'test','body_locations':[{'location':'第一章','quote':'路面强度按4.5MPa进行材料报审。','value':4.5,'unit':'MPa','scope':'路面'}]}], 'conflicts':[], 'construction_language_review':{'all_paragraphs_reviewed':True,'conclusion':'test'},'visual_review':{'three_color_figures_reviewed':True,'caption_photo_reviewed':True,'conclusion':'test'}}
+review['section_heading_review']=[{'chapter':'第一章 施工部署','section':'第一节 材料进场与工序准备',
+                                   'criterion':'材料报审重点','evidence_quote':'路面强度按4.5MPa进行材料报审。'}]
 review['parameters'][0]['kind']='project_fact'
 review['technical_review']={'version':1,'checks':{k:{'status':'reviewed','conclusion':'synthetic'}
                                                       for k in f.TECHNICAL_REVIEW_ITEMS},
@@ -87,7 +89,9 @@ from argparse import Namespace
 rp.write_text(json.dumps(review))
 rr=c.load_rules(None)|rules
 staticpath=OUT/'delivery-static.json';c.static_audit(passdoc,rules_path,staticpath)
-word={'delivery_status':'PASS','document_sha256':f.sha256(passdoc),'layout_engine':'Microsoft Word','rules':rr,'rules_sha256':c.rules_digest(rr),'photo_delivery_stage':'draft','checks':[]}
+last_page_pass={'name':'末页留白','status':'PASS',
+                'details':{'layout_source':'microsoft_word_page_geometry','bottom_blank_ratio':.1999}}
+word={'delivery_status':'PASS','document_sha256':f.sha256(passdoc),'layout_engine':'Microsoft Word','rules':rr,'rules_sha256':c.rules_digest(rr),'photo_delivery_stage':'draft','checks':[last_page_pass]}
 # Synthetic reports test schema only. They are never represented as Word execution.
 wp=OUT/'synthetic-word.json';wp.write_text(json.dumps(word))
 pg=OUT/'synthetic-pages.json';pg.write_text(json.dumps({'status':'PASS','page_source':'microsoft_word','document_sha256':f.sha256(passdoc),'rule':{'body_pages_target':TARGET,'page_tolerance':TOLERANCE,'front_matter_pages_excluded':FRONT}}))
@@ -95,6 +99,15 @@ sc=OUT/'synthetic-score.json';sc.write_text(json.dumps({'status':'PASS','phase':
 wr=OUT/'warnings.json';wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':[]}))
 a=Namespace(document=passdoc,state=statepath,mode='local-review',review=rp,static_report=staticpath,word_report=wp,page_report=pg,score_report=sc,warning_review=wr)
 expect('交付汇总schema正例允许编制稿',f.cmd_delivery(a)==0)
+wp.write_text(json.dumps(word|{'checks':[]}))
+expect('缺末页实测结果的旧版报告被拒绝',f.cmd_delivery(a)==2)
+wp.write_text(json.dumps(word|{'checks':[last_page_pass|{'details':last_page_pass['details']|{'bottom_blank_ratio':.2}}]}))
+expect('留白恰等于20%被拒绝',f.cmd_delivery(a)==2)
+wp.write_text(json.dumps(word))
+bad_heading=copy.deepcopy(review)
+bad_heading['section_heading_review'][0]['evidence_quote']='正文不存在的措施'
+expect('节名证据必须来自本节',bool(c.section_heading_review_errors(passdoc,bad_heading['section_heading_review'])))
+expect('不能跳过逐节复核',bool(c.section_heading_review_errors(passdoc,[])))
 # Rechecked language WARN must be closed even when a former report omitted that check.
 saved_doc=passdoc.read_bytes();saved_reports={p:p.read_bytes() for p in (rp,staticpath,wp,pg,sc,wr)}
 d=Document(passdoc);d.add_paragraph('疑似符号需结合原图核对。');d.save(passdoc)
@@ -108,7 +121,7 @@ for path,raw in saved_reports.items():path.write_bytes(raw)
 
 wp.write_text(json.dumps(word|{'document_sha256':'old version'}));expect('交付汇总拒绝旧版本Word报告',f.cmd_delivery(a)==2);wp.write_text(json.dumps(word))
 wp.write_text(json.dumps(word|{'rules_sha256':'altered'}));expect('交付汇总拒绝不同格式规则指纹',f.cmd_delivery(a)==2);wp.write_text(json.dumps(word))
-wp.write_text(json.dumps(word|{'checks':[{'name':'留白人工复核','status':'WARN'}]}));expect('未关闭留白WARN不允许交付',f.cmd_delivery(a)==2)
+wp.write_text(json.dumps(word|{'checks':[last_page_pass,{'name':'留白人工复核','status':'WARN'}]}));expect('未关闭留白WARN不允许交付',f.cmd_delivery(a)==2)
 wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':[{'report':'word','check':'留白人工复核','status':'reviewed','evidence':'synthetic QA only','conclusion':'test'}]}));expect('处理WARN记录结构允许交付',f.cmd_delivery(a)==0)
 # Force final stage while leaving placeholder. Both rule hashes match but embedded content blocks it.
 finalrules=rr|{'photo_delivery_stage':'final'}

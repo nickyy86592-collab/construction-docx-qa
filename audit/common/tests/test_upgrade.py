@@ -85,11 +85,38 @@ def portable(base):
  check('40/75 nodes preserved',f.STAGES==(40,75))
  check('long sample remains mandatory',f.planning_policy(395)['pilot_required'])
 
+def last_page_word_cases(word):
+ for case,count,expected in [('dense text',32,'PASS'),('short text',12,'FAIL'),('table at bottom',26,'PASS')]:
+  doc=word.Documents.Add()
+  try:
+   ps=doc.PageSetup
+   ps.PageHeight=792;ps.TopMargin=72;ps.BottomMargin=72
+   doc.Content.Text='\r'.join('Construction verification line %02d'%(i+1) for i in range(count))
+   doc.Content.Font.Size=12
+   pf=doc.Content.ParagraphFormat
+   pf.SpaceBefore=0;pf.SpaceAfter=0;pf.LineSpacingRule=4;pf.LineSpacing=18
+   doc.Sections(1).Footers(1).Range.Text='Footer content must not fill the body'
+   if case=='table at bottom':
+    end=int(doc.Content.End)-1
+    doc.Range(end,end).InsertAfter('\r')
+    end=int(doc.Content.End)-1
+    table=doc.Tables.Add(doc.Range(end,end),1,1)
+    table.Cell(1,1).Range.Text='A substantive table entry'
+    table.Rows.HeightRule=2;table.Rows.Height=72
+   doc.Repaginate()
+   pages=int(doc.ComputeStatistics(c.WD_STATISTIC_PAGES))
+   result=c.check_last_page_whitespace(doc,pages,{'body_start_page':1})
+   print('LAST_PAGE_NATIVE',case,pages,result.status,json.dumps(result.details,ensure_ascii=False),flush=True)
+   check('Native final-page '+case,pages==1 and result.status==expected and 'bottom_blank_ratio' in result.details)
+  finally:
+   doc.Close(False)
+
 def word_suite(base):
  if sys.platform!='win32':raise RuntimeError('--word requires Windows; no emulation or estimated PASS')
  import win32com.client
  word=win32com.client.DispatchEx('Word.Application');word.Visible=False;word.DisplayAlerts=0
  try:
+  last_page_word_cases(word)
   for kind in ('default','multi','none'):
    front={'default':1,'multi':3,'none':0}[kind];page=base/kind;page.mkdir()
    (page/'项目页数硬审.py').write_text(f'EXPECTED_BODY_PAGES=50\nPAGE_TOLERANCE=1\nFRONT_MATTER_PAGES={front}\n',encoding='utf-8')
