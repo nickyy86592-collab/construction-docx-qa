@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import sys
 from dataclasses import dataclass, asdict
@@ -59,6 +60,10 @@ WD_VERTICAL_POSITION_RELATIVE_TO_PAGE = 6
 WD_GOTO_PAGE = 1
 WD_GOTO_ABSOLUTE = 1
 WD_OUTLINE_BODY_TEXT = 10
+WD_MAIN_TEXT_STORY = 1
+WD_TEXT_RECTANGLE = 0
+WD_SHAPE_RECTANGLE = 1
+LAST_PAGE_BLANK_LIMIT = 0.20
 WD_SECTION_CONTINUOUS = 0
 WD_SECTION_NEW_COLUMN = 1
 WD_SECTION_NEW_PAGE = 2
@@ -1369,6 +1374,93 @@ def _body_page_number(document_page: int, body_start_page: int) -> Optional[int]
     return document_page - body_start_page + 1 if document_page >= body_start_page else None
 
 
+def check_last_page_whitespace(doc, page_count: int, rules: Dict[str, Any]) -> CheckResult:
+    """Measure the trailing blank band on the final physical Word page."""
+    detail = {
+        "document_page": page_count,
+        "body_page": _body_page_number(page_count, int(rules["body_start_page"])),
+        "limit_ratio": LAST_PAGE_BLANK_LIMIT,
+    }
+    operation = "定位末页"
+    try:
+        if detail["body_page"] is None:
+            raise AuditError("未定位到末页正文")
+        page_range = get_page_range(doc, page_count, page_count)
+        box = _page_body_box(page_range)
+        if box is None:
+            raise AuditError("无法读取末页正文版心")
+        window = doc.ActiveWindow
+        window.View.Type = 3  # wdPrintView
+        window.ScrollIntoView(page_range, False)
+        operation = "获取 Word 页面布局"
+        page = window.Panes(1).Pages.Item(page_count)
+        scale = box["page_height_pt"] / float(page.Height)
+        bottoms = []
+        untyped_blocks = 0
+        rectangles = page.Rectangles
+        for i in range(1, int(rectangles.Count) + 1):
+            rect = rectangles.Item(i)
+            try:
+                kind = int(rect.RectangleType)
+            except Exception:
+                # Word can expose auxiliary entries with no printable rectangle type.
+                untyped_blocks += 1
+                continue
+            if kind not in (WD_TEXT_RECTANGLE, WD_SHAPE_RECTANGLE):
+                continue
+            operation = f"读取布局块 {i} 的边界"
+            rect_top = float(rect.Top) * scale
+            rect_bottom = rect_top + float(rect.Height) * scale
+            if rect_top >= box["body_bottom_pt"] or rect_bottom <= box["body_top_pt"]:
+                continue
+            if kind == WD_SHAPE_RECTANGLE:
+                operation = f"核对图件布局块 {i} 所属区域"
+                if int(rect.Range.StoryType) == WD_MAIN_TEXT_STORY:
+                    bottoms.append(rect_bottom)
+                continue
+            operation = f"读取布局块 {i} 的行集合"
+            lines = rect.Lines
+            line_count = int(lines.Count)
+            for j in range(line_count, 0, -1):
+                line = lines.Item(j)
+                operation = f"读取布局块 {i} 第 {j} 行内容"
+                rng = line.Range
+                if int(rng.StoryType) == WD_MAIN_TEXT_STORY and clean_text(rng.Text):
+                    operation = f"读取布局块 {i} 第 {j} 行几何"
+                    # The native rectangle is the bottom edge when its final
+                    # line contains content, including a table's row boundary.
+                    bottom = rect_bottom if j == line_count else (float(line.Top) + float(line.Height)) * scale
+                    bottoms.append(bottom)
+                    break
+        if not bottoms or any(not math.isfinite(y) for y in bottoms):
+            raise AuditError("未取得末页实际文字、图表的有效底边")
+        content_bottom = max(bottoms)
+        if not box["body_top_pt"] < content_bottom <= box["page_height_pt"]:
+            raise AuditError("末页正文底边坐标超出有效范围")
+    except Exception as exc:
+        detail["operation"] = operation
+        detail["reason"] = str(exc)
+        return CheckResult("末页留白", "FAIL", "未取得可靠的 Microsoft Word 末页几何，须复测。", detail)
+
+    blank_height = max(0.0, box["body_bottom_pt"] - content_bottom)
+    ratio = blank_height / box["usable_height_pt"]
+    passed = ratio < LAST_PAGE_BLANK_LIMIT
+    detail.update(
+        layout_source="microsoft_word_page_geometry",
+        usable_height_pt=box["usable_height_pt"],
+        content_bottom_pt=content_bottom,
+        bottom_blank_height_pt=blank_height,
+        bottom_blank_ratio=ratio,
+        untyped_layout_blocks=untyped_blocks,
+    )
+    return CheckResult(
+        "末页留白", "PASS" if passed else "FAIL",
+        f"总页数末页正文版心页底留白为 {ratio:.2%}，" +
+        ("低于 20%。" if passed else "须调整至低于 20% 后重新 Word 实排。"),
+        detail,
+    )
+
+
 def check_image_migration_whitespace(doc, page_count: int, rules: Dict[str, Any]) -> Tuple[List[CheckResult], List[int]]:
     """
     重点识别：上一页出现大块页底留白，而下一页靠近页首出现图片。
@@ -1503,7 +1595,7 @@ def check_image_migration_whitespace(doc, page_count: int, rules: Dict[str, Any]
 def export_whitespace_evidence(doc, pages: List[int], report_path: Path, evidence_dir: Optional[Path]) -> CheckResult:
     """对异常页生成 Word 版式证据：优先 PNG，其次 EMF；始终尝试导出 Word PDF 供复核。"""
     if not pages:
-        return CheckResult("彩图留白证据", "PASS", "未触发彩图相邻留白异常，无需生成相邻页证据截图。")
+        return CheckResult("留白版式证据", "PASS", "未触发相邻页或末页留白异常。")
 
     target = evidence_dir or report_path.with_name(report_path.stem + "_evidence")
     target.mkdir(parents=True, exist_ok=True)
@@ -1564,15 +1656,15 @@ def export_whitespace_evidence(doc, pages: List[int], report_path: Path, evidenc
         "png_screenshots": png_files,
         "emf_screenshots": emf_files,
         "errors": errors,
-        "note": "Word相邻页证据；20%为可优化留白提示，1/3为图片迁移异常起始判断线，均非招标硬要求。",
+        "note": "Microsoft Word 留白版式证据，异常分类及阈值见对应审查项。",
     }
     (target / "evidence_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     if png_files or emf_files:
-        return CheckResult("彩图留白证据", "PASS", "已生成异常页及相邻图片页的 Microsoft Word 页面证据图，并保留 Word 导出 PDF。", manifest)
+        return CheckResult("留白版式证据", "PASS", "已生成 Microsoft Word 留白异常页面的版式证据。", manifest)
     if pdf_path.exists():
-        return CheckResult("彩图留白证据", "WARN", "已生成 Microsoft Word 版式 PDF，但当前运行环境未生成逐页 PNG/EMF 截图；请按报告页码在 PDF 中复核。", manifest)
-    return CheckResult("彩图留白证据", "WARN", "异常页证据导出未完成；已在报告中保留页码与几何触发依据，不得把证据项解释为已完成截图复核。", manifest)
+        return CheckResult("留白版式证据", "WARN", "已生成 Microsoft Word 版式 PDF，但当前运行环境未生成逐页 PNG/EMF 截图；请按报告页码在 PDF 中复核。", manifest)
+    return CheckResult("留白版式证据", "WARN", "异常页证据导出未完成；已在报告中保留页码与几何触发依据，不得把证据项解释为已完成截图复核。", manifest)
 
 
 def doc_full_text(doc) -> str:
@@ -1859,6 +1951,10 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         results.extend(check_blank_and_low_content_pages(doc, page_count, rules))
         whitespace_checks, whitespace_evidence_pages = check_image_migration_whitespace(doc, page_count, rules)
         results.extend(whitespace_checks)
+        last_page = check_last_page_whitespace(doc, page_count, rules)
+        results.append(last_page)
+        if last_page.status == "FAIL":
+            whitespace_evidence_pages = sorted(set(whitespace_evidence_pages) | {page_count})
         results.append(export_whitespace_evidence(doc, whitespace_evidence_pages, report_path, evidence_dir))
         results.extend(check_required_figures(doc, rules))
         results.extend(check_real_photo_slots(doc, rules))
@@ -1868,7 +1964,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         overall = "PASS" if not hard_failures else "FAIL"
 
         report = {
-            "audit_version": "1.11.0",
+            "audit_version": "1.12.0",
             "rules_sha256": rules_digest(rules),
             "photo_delivery_stage": rules.get("photo_delivery_stage"),
             "layout_engine": "Microsoft Word",
@@ -2030,6 +2126,43 @@ def _docx_blocks(path):
 
 def _caption_match(text, label):
     return re.fullmatch(rf'{label}\s*([1-9][0-9]*)[\s:：]+(\S.*)', text.strip())
+
+
+def section_heading_review_errors(document, review):
+    """Verify that the semantic review covers the current headings and quotes their own sections."""
+    if not isinstance(review, list) or not review:
+        return ["缺少逐节标题复核 section_heading_review"]
+
+    chapter = ""
+    current = None
+    sections = []
+    for block in _docx_blocks(document):
+        title = normalize_spaces(block["text"])
+        if block["outline"] == 1:
+            chapter, current = title, None
+        elif block["outline"] == 2 and chapter:
+            current = (chapter, title, [])
+            sections.append(current)
+        elif (current is not None and block["outline"] != 3 and block["table_index"] is None
+              and not block["caption_style"] and not any(_caption_match(title, label) for label in ("图", "表"))):
+            current[2].append(title)
+
+    if not sections or len(review) != len(sections):
+        return [f"二级标题复核须按正文逐节登记（正文 {len(sections)} 节，已登记 {len(review)} 节）"]
+
+    errors = []
+    for record, (chapter, section, body) in zip(review, sections):
+        if not isinstance(record, dict) or (record.get("chapter"), record.get("section")) != (chapter, section):
+            errors.append(f"标题复核未对应当前正文节名：{chapter} / {section}")
+            continue
+        criterion = record.get("criterion")
+        quote = record.get("evidence_quote")
+        if not isinstance(criterion, str) or not criterion.strip():
+            errors.append(f"缺少评分维度、施工控制重点或指定标题依据：{chapter} / {section}")
+        quote = normalize_spaces(quote) if isinstance(quote, str) else ""
+        if len(re.sub(r"\s+", "", quote)) < 12 or not any(quote in paragraph for paragraph in body):
+            errors.append(f"节名支撑引文未在本节正文找到：{chapter} / {section}")
+    return errors
 
 
 def check_caption_numbering(blocks, rules):
@@ -2237,7 +2370,7 @@ def static_audit(document, rules_path, report_path,page_dir=None):
     rules = load_rules(rules_path,page_dir)
     results = portable_checks(document, rules)
     overall = 'FAIL' if any(x.status=='FAIL' for x in results) else 'PASS'
-    report = {'audit_version':'1.11.0', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
+    report = {'audit_version':'1.12.0', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
               'rules_sha256':rules_digest(rules), 'photo_delivery_stage':rules.get('photo_delivery_stage'),
               'delivery_status':overall, 'checks':[asdict(x) for x in results],
               'notes':['静态核验不使用Word，不能证明实际页数、版式、照片真实性或技术参数正确。']}

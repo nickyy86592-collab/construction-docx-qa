@@ -773,6 +773,15 @@ def cmd_delivery(a):
     common=importlib.util.module_from_spec(spec)
     sys.modules[spec.name]=common
     spec.loader.exec_module(common)
+    errors.extend(common.section_heading_review_errors(a.document, review.get('section_heading_review')))
+    last_page_checks = [c for c in word.get('checks', []) if c.get('name') == '末页留白']
+    last_page = last_page_checks[0] if len(last_page_checks) == 1 else {}
+    last_page_detail = last_page.get('details') or {}
+    ratio = last_page_detail.get('bottom_blank_ratio')
+    if (last_page.get('status') != 'PASS'
+            or last_page_detail.get('layout_source') != 'microsoft_word_page_geometry'
+            or type(ratio) not in (int, float) or not 0 <= ratio < common.LAST_PAGE_BLANK_LIMIT):
+        errors.append('缺少当前 DOCX 的 Word 末页留白实测合格记录（须低于20%）')
     fresh_checks = common.portable_checks(a.document,rules)
     for check in fresh_checks:
         if check.status=='FAIL':
