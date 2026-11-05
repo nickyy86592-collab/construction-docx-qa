@@ -1,11 +1,11 @@
 {
   "source_skill": "general-construction-organization-writing",
-  "version": "2026-11-04-r12",
-  "format_audit_version": "1.12.0",
+  "version": "2026-11-05-r13",
+  "format_audit_version": "1.13.0",
   "common_files_sha256": {
-    "Word正式交付硬审（不含页数）.py": "5f2da4acdb95fa33d2b3b0c0d6befde4d668fe5265cc71a3c2df354f028ff089",
+    "Word正式交付硬审（不含页数）.py": "40c2da4dc9a895547fecc6fc5be44d766ad4afa3387bcebcf0c66a8fc18071bf",
     "visual_policy.py": "0bc3f5568b4ada916069092ebda72ecdbd3745cc7fa8007ae91e87e3c2706dc0",
-    "编制流程门禁.py": "2f66fca270ec71a80372fad452685009c9284c19c83d9c5e2f2684f1e34ae8b1",
+    "编制流程门禁.py": "d9fca2a814a85268912ed59d2373e797755d61049c1bec94ec6e5b4b2e23858c",
     "评分响应核验.py": "b0fd9fb44d2d89c9b9eb20412edcf24c10de894a1678037dd5e977ace863fbfa"
   }
 }
