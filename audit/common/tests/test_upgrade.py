@@ -128,12 +128,57 @@ def last_page_word_cases(word):
   finally:
    doc.Close(False)
 
+def natural_body_flow_word_cases(word, base):
+ for mode, paragraph_count in (('natural',62),('locked',54)):
+  doc=word.Documents.Add()
+  try:
+   setup=doc.PageSetup
+   setup.PageHeight=792
+   setup.PageWidth=612
+   setup.TopMargin=72
+   setup.BottomMargin=72
+   doc.Content.Text='\r'.join(['第一章 施工部署','第一节 进度计划可行','一、工序交接']
+                                + ['Inspect and record the construction work area.']*(paragraph_count-3))
+   doc.Content.Font.Size=10
+   fmt=doc.Content.ParagraphFormat
+   fmt.LineSpacingRule=4
+   fmt.LineSpacing=20
+   fmt.SpaceBefore=0
+   fmt.SpaceAfter=0
+   fmt.KeepWithNext=False
+   fmt.KeepTogether=False
+   fmt.PageBreakBefore=False
+   for level in (1,2,3):
+    doc.Paragraphs(level).OutlineLevel=level
+    doc.Paragraphs(level).Format.KeepWithNext=True
+   if mode=='locked':
+    for index in range(25,37):
+     doc.Paragraphs(index).Format.KeepTogether=True
+     doc.Paragraphs(index).Format.KeepWithNext=index<36
+   path=base/(mode+'-body-flow.docx')
+   doc.SaveAs2(str(path),FileFormat=12)
+   doc.Repaginate()
+   pages=int(doc.ComputeStatistics(c.WD_STATISTIC_PAGES))
+   rules={'body_start_page':1}
+   final=c.check_last_page_whitespace(doc,pages,rules)
+   prior,evidence=c.check_pre_final_body_whitespace(doc,pages,rules)
+   flow=c.check_body_flow_static(c._docx_blocks(path),rules)
+   print('Native body flow',mode,pages,final.details,prior.details,flush=True)
+   check('Native body flow '+mode+' final page passes',pages==2 and final.status=='PASS')
+   check('Native body flow '+mode+' prior-page geometry',prior.status==('WARN' if mode=='locked' else 'PASS')
+         and evidence==({1,2} if mode=='locked' else set()))
+   check('Native body flow '+mode+' pagination controls',flow.status==('FAIL' if mode=='locked' else 'PASS'))
+  finally:
+   doc.Close(False)
+
+
 def word_suite(base):
  if sys.platform!='win32':raise RuntimeError('--word requires Windows; no emulation or estimated PASS')
  import win32com.client
  word=win32com.client.DispatchEx('Word.Application');word.Visible=False;word.DisplayAlerts=0
  try:
   last_page_word_cases(word)
+  natural_body_flow_word_cases(word,base)
   for kind in ('default','multi','none'):
    front={'default':1,'multi':3,'none':0}[kind];page=base/kind;page.mkdir()
    (page/'项目页数硬审.py').write_text(f'EXPECTED_BODY_PAGES=50\nPAGE_TOLERANCE=1\nFRONT_MATTER_PAGES={front}\n',encoding='utf-8')

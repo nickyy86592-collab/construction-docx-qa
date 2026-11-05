@@ -63,7 +63,11 @@ WD_OUTLINE_BODY_TEXT = 10
 WD_MAIN_TEXT_STORY = 1
 WD_TEXT_RECTANGLE = 0
 WD_SHAPE_RECTANGLE = 1
+AUDIT_VERSION = "1.13.0"
 LAST_PAGE_BLANK_LIMIT = 0.20
+PRE_FINAL_PAGE_REVIEW_COUNT = 4
+PRE_FINAL_PAGE_BLANK_REVIEW_RATIO = 0.20
+PRE_FINAL_PAGE_CHECK = "末页前正文连续排版_实排留白"
 WD_SECTION_CONTINUOUS = 0
 WD_SECTION_NEW_COLUMN = 1
 WD_SECTION_NEW_PAGE = 2
@@ -78,6 +82,7 @@ DEFAULT_RULES: Dict[str, Any] = {
     "front_page": 1,
     "front_matter": {"cover_required": True, "toc_levels": [1]},
     "heading_patterns": None,  # 招标另定标题体系时，由AI提取1/2/3级正则；不改变大纲级别
+    "locked_level2_titles": [],  # 仅登记招标或有效补遗逐字锁定的节名
     "body_start_page": 2,
     "allow_front_matter_break": True,
     "hard_fail_on_mechanical_structure": True,
@@ -211,6 +216,7 @@ def load_rules(path: Optional[Path], page_dir=None) -> Dict[str, Any]:
                     raise AuditError('标题模式第一捕获组须为可解析编号')
             except (re.error, TypeError) as exc:
                 raise AuditError('标题模式无效：'+str(exc)) from exc
+    locked_level2_title_keys(rules)
     return rules
 
 
@@ -987,7 +993,7 @@ def check_pagination_controls(doc, records: List[Dict[str, Any]], headings: List
     out: List[CheckResult] = []
     body_start_page = int(rules["body_start_page"])
 
-    # 标题段前分页：硬失败。
+    # 正文段前分页：标题和普通段落均不得用于主动换页。
     bad_heading_pb = [
         {"text": h["text"], "page": h["page"]}
         for h in headings if h.get("page_break_before") and not (rules.get("allow_front_matter_break") and headings and h is headings[0] and body_start_page > 1 and h["page"] == body_start_page)
@@ -998,6 +1004,14 @@ def check_pagination_controls(doc, records: List[Dict[str, Any]], headings: List
         "存在标题设置‘段前分页/另起一页’。" if bad_heading_pb else "未发现标题段前强制分页。",
         bad_heading_pb or None,
     ))
+    heading_starts = {h["start"] for h in headings}
+    bad_body_pb = [
+        {"text": r["text"][:80], "page": r["page"]}
+        for r in records if r["page"] >= body_start_page and r.get("page_break_before")
+        and r["start"] not in heading_starts
+    ]
+    out.append(CheckResult("正文段前分页_PageBreakBefore", "FAIL" if bad_body_pb else "PASS",
+        "正文普通段落不得设置段前分页。", bad_body_pb or None))
 
     # 正文内部手工分页符：硬失败。
     manual_breaks = iter_find_ranges(doc, "^m")
@@ -1009,9 +1023,7 @@ def check_pagination_controls(doc, records: List[Dict[str, Any]], headings: List
         [{"page": x[2], "start": x[0]} for x in body_manual] or None,
     ))
 
-    # 分节符不能一刀切：有些文档会因页眉页脚、页码等使用分节。
-    # 但本规则明确禁止任何横向页面，因此横向版式由独立“页面方向”硬审直接 FAIL。
-    # 此处仅对“同版式 + 强制新页 + 新节第一段就是标题”的情形判硬失败；其他正文强制新页分节给 WARN。
+    # 只允许必要的前置页边界；正文页眉页脚等变化使用连续分节。
     heading_forced: List[Dict[str, Any]] = []
     layout_sections: List[Dict[str, Any]] = []
     section_count = int(doc.Sections.Count)
@@ -1053,8 +1065,8 @@ def check_pagination_controls(doc, records: List[Dict[str, Any]], headings: List
     if layout_sections:
         out.append(CheckResult(
             "正文其他强制新页分节",
-            "WARN",
-            "正文存在其他强制新页分节；虽然未直接认定为标题强制分页，但仍建议确认其必要性。页面横向与否由独立页面方向硬审判定。",
+            "FAIL",
+            "正文内部不得利用新页分节主动换页。",
             layout_sections,
         ))
     else:
@@ -1374,26 +1386,25 @@ def _body_page_number(document_page: int, body_start_page: int) -> Optional[int]
     return document_page - body_start_page + 1 if document_page >= body_start_page else None
 
 
-def check_last_page_whitespace(doc, page_count: int, rules: Dict[str, Any]) -> CheckResult:
-    """Measure the trailing blank band on the final physical Word page."""
+def _measure_body_page_whitespace(doc, page_number, page_count, body_start):
+    """Read the trailing blank band from the same Word geometry on each page."""
     detail = {
-        "document_page": page_count,
-        "body_page": _body_page_number(page_count, int(rules["body_start_page"])),
-        "limit_ratio": LAST_PAGE_BLANK_LIMIT,
+        "document_page": page_number,
+        "body_page": _body_page_number(page_number, body_start),
     }
-    operation = "定位末页"
+    operation = "定位正文页"
     try:
         if detail["body_page"] is None:
-            raise AuditError("未定位到末页正文")
-        page_range = get_page_range(doc, page_count, page_count)
+            raise AuditError("未定位到正文页")
+        page_range = get_page_range(doc, page_number, page_count)
         box = _page_body_box(page_range)
         if box is None:
-            raise AuditError("无法读取末页正文版心")
+            raise AuditError("无法读取正文版心")
         window = doc.ActiveWindow
         window.View.Type = 3  # wdPrintView
         window.ScrollIntoView(page_range, False)
         operation = "获取 Word 页面布局"
-        page = window.Panes(1).Pages.Item(page_count)
+        page = window.Panes(1).Pages.Item(page_number)
         scale = box["page_height_pt"] / float(page.Height)
         bottoms = []
         untyped_blocks = 0
@@ -1433,18 +1444,17 @@ def check_last_page_whitespace(doc, page_count: int, rules: Dict[str, Any]) -> C
                     bottoms.append(bottom)
                     break
         if not bottoms or any(not math.isfinite(y) for y in bottoms):
-            raise AuditError("未取得末页实际文字、图表的有效底边")
+            raise AuditError("未取得实际文字、图表的有效底边")
         content_bottom = max(bottoms)
         if not box["body_top_pt"] < content_bottom <= box["page_height_pt"]:
-            raise AuditError("末页正文底边坐标超出有效范围")
+            raise AuditError("正文底边坐标超出有效范围")
     except Exception as exc:
         detail["operation"] = operation
         detail["reason"] = str(exc)
-        return CheckResult("末页留白", "FAIL", "未取得可靠的 Microsoft Word 末页几何，须复测。", detail)
+        return detail
 
     blank_height = max(0.0, box["body_bottom_pt"] - content_bottom)
     ratio = blank_height / box["usable_height_pt"]
-    passed = ratio < LAST_PAGE_BLANK_LIMIT
     detail.update(
         layout_source="microsoft_word_page_geometry",
         usable_height_pt=box["usable_height_pt"],
@@ -1453,12 +1463,44 @@ def check_last_page_whitespace(doc, page_count: int, rules: Dict[str, Any]) -> C
         bottom_blank_ratio=ratio,
         untyped_layout_blocks=untyped_blocks,
     )
+    return detail
+
+
+def check_last_page_whitespace(doc, page_count: int, rules: Dict[str, Any]) -> CheckResult:
+    detail = _measure_body_page_whitespace(doc, page_count, page_count, int(rules["body_start_page"]))
+    detail["limit_ratio"] = LAST_PAGE_BLANK_LIMIT
+    ratio = detail.get("bottom_blank_ratio")
+    if ratio is None:
+        return CheckResult("末页留白", "FAIL", "未取得可靠的 Microsoft Word 末页几何，须复测。", detail)
+    passed = ratio < LAST_PAGE_BLANK_LIMIT
     return CheckResult(
         "末页留白", "PASS" if passed else "FAIL",
         f"总页数末页正文版心页底留白为 {ratio:.2%}，" +
         ("低于 20%。" if passed else "须调整至低于 20% 后重新 Word 实排。"),
         detail,
     )
+
+
+def pre_final_body_pages(last_page, body_start):
+    return range(max(body_start, last_page - PRE_FINAL_PAGE_REVIEW_COUNT), last_page)
+
+
+def check_pre_final_body_whitespace(doc, page_count, rules):
+    body_start = int(rules["body_start_page"])
+    rows = [_measure_body_page_whitespace(doc, page, page_count, body_start)
+            for page in pre_final_body_pages(page_count, body_start)]
+    failed = [row["document_page"] for row in rows if "bottom_blank_ratio" not in row]
+    review = [row["document_page"] for row in rows
+              if row.get("bottom_blank_ratio", 0) >= PRE_FINAL_PAGE_BLANK_REVIEW_RATIO]
+    detail = {"review_ratio": PRE_FINAL_PAGE_BLANK_REVIEW_RATIO, "pages": rows, "review_pages": review}
+    if failed:
+        result = CheckResult(PRE_FINAL_PAGE_CHECK, "FAIL", "末页前存在未取得可靠 Word 几何的正文页，须复测。", detail)
+    elif review:
+        result = CheckResult(PRE_FINAL_PAGE_CHECK, "WARN", "相邻页底留白达到20%，须逐页对照 Word 实排核查并记录成因。", detail)
+    else:
+        result = CheckResult(PRE_FINAL_PAGE_CHECK, "PASS", "已实测末页前最多4页正文，无达到20%的页底留白。", detail)
+    evidence_pages = {n for page in failed + review for n in (page, page + 1)}
+    return result, evidence_pages
 
 
 def check_image_migration_whitespace(doc, page_count: int, rules: Dict[str, Any]) -> Tuple[List[CheckResult], List[int]]:
@@ -1953,9 +1995,12 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         results.extend(whitespace_checks)
         last_page = check_last_page_whitespace(doc, page_count, rules)
         results.append(last_page)
+        pre_final, pre_final_evidence = check_pre_final_body_whitespace(doc, page_count, rules)
+        results.append(pre_final)
         if last_page.status == "FAIL":
-            whitespace_evidence_pages = sorted(set(whitespace_evidence_pages) | {page_count})
-        results.append(export_whitespace_evidence(doc, whitespace_evidence_pages, report_path, evidence_dir))
+            pre_final_evidence.add(page_count)
+        evidence_pages = sorted(set(whitespace_evidence_pages) | pre_final_evidence)
+        results.append(export_whitespace_evidence(doc, evidence_pages, report_path, evidence_dir))
         results.extend(check_required_figures(doc, rules))
         results.extend(check_real_photo_slots(doc, rules))
         results.append(check_fonts(doc, records, rules))
@@ -1964,7 +2009,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         overall = "PASS" if not hard_failures else "FAIL"
 
         report = {
-            "audit_version": "1.12.0",
+            "audit_version": AUDIT_VERSION,
             "rules_sha256": rules_digest(rules),
             "photo_delivery_stage": rules.get("photo_delivery_stage"),
             "layout_engine": "Microsoft Word",
@@ -2060,6 +2105,15 @@ def _docx_blocks(path):
           'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'}
     w = '{' + ns['w'] + '}'
     blocks = []
+    pagination_tags = ('keepNext', 'keepLines', 'pageBreakBefore')
+
+    def pagination_flags(node, prefix):
+        flags = {}
+        for tag in pagination_tags:
+            element = node.find(prefix + 'w:' + tag, ns)
+            if element is not None:
+                flags[tag] = element.get(w + 'val', '1').lower() not in ('0', 'false', 'off')
+        return flags
 
     def body_blocks(parent):
         for child in parent:
@@ -2073,10 +2127,14 @@ def _docx_blocks(path):
         targets = {r.get('Id'): r.get('Target') for r in rels if r.get('TargetMode') != 'External'}
         styles = ET.fromstring(z.read('word/styles.xml')) if 'word/styles.xml' in z.namelist() else ET.Element('styles')
         style_nodes = {s.get(w + 'styleId'): s for s in styles.findall('w:style', ns)}
+        defaults = pagination_flags(styles, 'w:docDefaults/w:pPrDefault/w:pPr/')
+        default_style = next((sid for sid, s in style_nodes.items()
+                              if s.get(w + 'type') == 'paragraph' and s.get(w + 'default') in ('1', 'true')), None)
         style_info = {}
         for style_id, node in style_nodes.items():
             outline = None
             caption_style = False
+            pagination = {}
             seen = set()
             while node is not None and node not in seen:
                 seen.add(node)
@@ -2085,9 +2143,11 @@ def _docx_blocks(path):
                     outline = int(level.get(w + 'val')) + 1
                 name = node.find('w:name', ns)
                 caption_style |= name is not None and name.get(w + 'val', '').lower() in ('caption', '题注')
+                for tag, value in pagination_flags(node, 'w:pPr/').items():
+                    pagination.setdefault(tag, value)
                 parent = node.find('w:basedOn', ns)
                 node = style_nodes.get(parent.get(w + 'val')) if parent is not None else None
-            style_info[style_id] = (outline, caption_style)
+            style_info[style_id] = (outline, caption_style, pagination)
 
         body = ET.fromstring(z.read('word/document.xml')).find('w:body', ns)
         table_index = 0
@@ -2098,7 +2158,8 @@ def _docx_blocks(path):
             if is_table:
                 table_index += 1
             style = el.find('w:pPr/w:pStyle', ns)
-            outline, caption_style = style_info.get(style.get(w + 'val') if style is not None else None, (None, False))
+            style_id = style.get(w + 'val') if style is not None else default_style
+            outline, caption_style, inherited_pagination = style_info.get(style_id, (None, False, {}))
             level = el.find('w:pPr/w:outlineLvl', ns)
             if level is not None:
                 outline = int(level.get(w + 'val')) + 1
@@ -2118,6 +2179,10 @@ def _docx_blocks(path):
                 'text': text, 'images': images, 'framed': framed, 'height_pt': max(heights, default=0),
                 'outline': outline, 'caption_style': caption_style, 'table_index': table_index if is_table else None,
                 'drawing_count': drawing_count,
+                'pagination': {} if is_table else {
+                    **defaults, **inherited_pagination, **pagination_flags(el, 'w:pPr/'),
+                },
+                'manual_page_break': any(br.get(w + 'type') == 'page' for br in el.iter(w + 'br')),
                 'photo_frame': len(rows) == 1 and len(rows[0].findall('w:tc', ns)) == 1
                 and bool(RE_REAL_PHOTO_PLACEHOLDER.search(text)),
             })
@@ -2126,6 +2191,80 @@ def _docx_blocks(path):
 
 def _caption_match(text, label):
     return re.fullmatch(rf'{label}\s*([1-9][0-9]*)[\s:：]+(\S.*)', text.strip())
+
+
+def locked_level2_title_keys(rules):
+    """Match exceptions only to the exact chapter and numbered section."""
+    entries = rules.get("locked_level2_titles", [])
+    if not isinstance(entries, list):
+        raise AuditError("locked_level2_titles 须为数组")
+    keys = set()
+    for item in entries:
+        if not isinstance(item, dict) or any(
+            not isinstance(item.get(key), str) or not item[key].strip()
+            for key in ("chapter", "section", "source_ref")
+        ):
+            raise AuditError("招标锁定节名须逐项登记章名、含编号节名及有效招标原文位置")
+        key = (normalize_spaces(item["chapter"]), normalize_spaces(item["section"]))
+        if key in keys:
+            raise AuditError("招标锁定节名重复登记")
+        keys.add(key)
+    return keys
+
+
+def check_section_title_punctuation(blocks, rules):
+    locked = locked_level2_title_keys(rules)
+    seen, invalid = set(), []
+    chapter = ""
+    for block in blocks:
+        title = normalize_spaces(block["text"])
+        if block["outline"] == 1:
+            chapter = title
+        elif block["outline"] == 2:
+            key = (chapter, title)
+            seen.add(key)
+            # An ASCII comma between digits can be part of a numeric value.
+            if key not in locked and re.search(r"[，；;]|(?<!\d),|,(?!\d)", title):
+                invalid.append({"chapter": chapter, "section": title})
+    unused = sorted(locked - seen)
+    return CheckResult("二级标题_串句标点", "FAIL" if invalid or unused else "PASS",
+        "自拟节名不得用逗号或分号串句，招标锁定节名须与实际正文逐字对应。",
+        {"punctuation": invalid, "unmatched_locked_titles": unused})
+
+
+def _is_layout_object(block):
+    return (block["table_index"] is not None or block["drawing_count"] > 0
+            or block["caption_style"] or any(_caption_match(block["text"], label) for label in ("图", "表")))
+
+
+def check_body_flow_static(blocks, rules):
+    """Reject effective pagination locks on ordinary body paragraphs."""
+    problems = []
+    heading = ""
+    for index, block in enumerate(blocks):
+        text = normalize_spaces(block["text"])
+        is_heading = block["outline"] in (1, 2, 3)
+        if is_heading:
+            heading = text
+        flags = block["pagination"]
+        causes = []
+        if block["manual_page_break"]:
+            causes.append("手工分页符")
+        if flags.get("pageBreakBefore") and not (
+            index == 0 and block["outline"] == 1 and rules.get("allow_front_matter_break")
+            and rules["body_start_page"] > 1
+        ):
+            causes.append("段前分页")
+        if text and not is_heading and not _is_layout_object(block):
+            if flags.get("keepLines"):
+                causes.append("普通正文段中不分页")
+            next_is_object = index + 1 < len(blocks) and _is_layout_object(blocks[index + 1])
+            if flags.get("keepNext") and not next_is_object:
+                causes.append("普通正文与下段同页")
+        if causes:
+            problems.append({"heading": heading, "body_block": index + 1, "text": text[:80], "controls": causes})
+    return CheckResult("正文连续排版_分页设置", "FAIL" if problems else "PASS",
+        "正文须自然流排。标题正常带首段、图表及题注的必要绑定保留。", problems or None)
 
 
 def section_heading_review_errors(document, review):
@@ -2294,6 +2433,7 @@ def portable_checks(document, rules):
                 if block['outline'] in (1, 2, 3) and block['text'].strip()]
     structure = check_heading_level_presence(headings)
     out = [CheckResult('静态' + structure.name, structure.status, structure.message, structure.details)]
+    out.extend([check_section_title_punctuation(body_blocks, rules), check_body_flow_static(body_blocks, rules)])
     out.extend(check_caption_numbering(body_blocks, rules))
     configured = rules.get('required_figures')
     policy = rules.get('visual_policy')
@@ -2370,7 +2510,7 @@ def static_audit(document, rules_path, report_path,page_dir=None):
     rules = load_rules(rules_path,page_dir)
     results = portable_checks(document, rules)
     overall = 'FAIL' if any(x.status=='FAIL' for x in results) else 'PASS'
-    report = {'audit_version':'1.12.0', 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
+    report = {'audit_version':AUDIT_VERSION, 'audit_type':'embedded_docx_static', 'document_sha256':sha256_file(document),
               'rules_sha256':rules_digest(rules), 'photo_delivery_stage':rules.get('photo_delivery_stage'),
               'delivery_status':overall, 'checks':[asdict(x) for x in results],
               'notes':['静态核验不使用Word，不能证明实际页数、版式、照片真实性或技术参数正确。']}

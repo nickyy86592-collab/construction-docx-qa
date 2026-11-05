@@ -65,6 +65,35 @@ for label,kwargs in [('黑灰三图被拦截',{'gray':True}),('照片位置缺�
  p=OUT/(str(len(results))+'.docx');make_doc(p,**kwargs);expect(label,bool(statuses(p)))
 expect('正式稿残留照片占位被拦截',bool(statuses(passdoc,rules|{'photo_delivery_stage':'final'})))
 expect('空照片规则被拦截',bool(statuses(passdoc,rules|{'required_real_photo_slots':[]})))
+flow_doc=OUT/'body-flow.docx'
+body=Document(passdoc)
+from docx.enum.style import WD_STYLE_TYPE
+parent=body.styles.add_style('Locked prose',WD_STYLE_TYPE.PARAGRAPH)
+parent.paragraph_format.keep_together=True
+child=body.styles.add_style('Inherited lock',WD_STYLE_TYPE.PARAGRAPH)
+child.base_style=parent
+paragraph=body.add_paragraph('施工面检查合格后办理工序交接。',style=child)
+body.save(flow_doc)
+expect('继承样式的普通正文锁段被拦截','正文连续排版_分页设置' in statuses(flow_doc))
+paragraph.paragraph_format.keep_together=False
+body.save(flow_doc)
+expect('直接关闭样式锁段后恢复自然排版','正文连续排版_分页设置' not in statuses(flow_doc))
+paragraph.paragraph_format.keep_with_next=True
+next_paragraph=body.add_paragraph('下道工序复核交接记录后开始。')
+body.save(flow_doc)
+expect('普通正文串联到下段被拦截','正文连续排版_分页设置' in statuses(flow_doc))
+paragraph.paragraph_format.keep_with_next=False
+next_paragraph.paragraph_format.page_break_before=True
+body.save(flow_doc)
+expect('普通正文段前分页被拦截','正文连续排版_分页设置' in statuses(flow_doc))
+next_paragraph.paragraph_format.page_break_before=False
+section=next(p for p in body.paragraphs if p.style.name=='Heading 2')
+section.text='第一节 工期目标明确，计划可行'
+body.save(flow_doc)
+expect('自拟二级标题串句被拦截','二级标题_串句标点' in statuses(flow_doc))
+locked={'chapter':'第一章 施工部署','section':section.text,'source_ref':'合成招标样例第1节'}
+expect('有依据的指定节名可逐字保留','二级标题_串句标点' not in statuses(flow_doc,rules|{'locked_level2_titles':[locked]}))
+expect('其他章节的锁定登记不能豁免当前节名','二级标题_串句标点' in statuses(flow_doc,rules|{'locked_level2_titles':[locked|{'chapter':'第二章 施工部署'}]}))
 # CLI exit code and serialized report, not just internal function.
 rules_path=OUT/'format_rules.json';rules_path.write_text(json.dumps(rules,ensure_ascii=False))
 rc=subprocess.run([sys.executable,str(ROOT/'scripts/Word正式交付硬审（不含页数）.py'),str(passdoc),'--rules',str(rules_path),'--static-only','--report',str(OUT/'static.json')],capture_output=True,text=True)
@@ -89,9 +118,12 @@ from argparse import Namespace
 rp.write_text(json.dumps(review))
 rr=c.load_rules(None)|rules
 staticpath=OUT/'delivery-static.json';c.static_audit(passdoc,rules_path,staticpath)
-last_page_pass={'name':'末页留白','status':'PASS',
-                'details':{'layout_source':'microsoft_word_page_geometry','bottom_blank_ratio':.1999}}
-word={'delivery_status':'PASS','document_sha256':f.sha256(passdoc),'layout_engine':'Microsoft Word','rules':rr,'rules_sha256':c.rules_digest(rr),'photo_delivery_stage':'draft','checks':[last_page_pass]}
+geometry={'layout_source':'microsoft_word_page_geometry','bottom_blank_ratio':.1999}
+last_page_pass={'name':'末页留白','status':'PASS','details':geometry|{'document_page':FRONT+2,'body_page':2}}
+pre_final_pass={'name':c.PRE_FINAL_PAGE_CHECK,'status':'PASS','details':{
+ 'review_ratio':c.PRE_FINAL_PAGE_BLANK_REVIEW_RATIO,'review_pages':[],
+ 'pages':[geometry|{'document_page':FRONT+1,'body_page':1}]}}
+word={'audit_version':c.AUDIT_VERSION,'delivery_status':'PASS','document_sha256':f.sha256(passdoc),'layout_engine':'Microsoft Word','rules':rr,'rules_sha256':c.rules_digest(rr),'photo_delivery_stage':'draft','checks':[last_page_pass,pre_final_pass]}
 # Synthetic reports test schema only. They are never represented as Word execution.
 wp=OUT/'synthetic-word.json';wp.write_text(json.dumps(word))
 pg=OUT/'synthetic-pages.json';pg.write_text(json.dumps({'status':'PASS','page_source':'microsoft_word','document_sha256':f.sha256(passdoc),'rule':{'body_pages_target':TARGET,'page_tolerance':TOLERANCE,'front_matter_pages_excluded':FRONT}}))
@@ -101,8 +133,12 @@ a=Namespace(document=passdoc,state=statepath,mode='local-review',review=rp,stati
 expect('交付汇总schema正例允许编制稿',f.cmd_delivery(a)==0)
 wp.write_text(json.dumps(word|{'checks':[]}))
 expect('缺末页实测结果的旧版报告被拒绝',f.cmd_delivery(a)==2)
-wp.write_text(json.dumps(word|{'checks':[last_page_pass|{'details':last_page_pass['details']|{'bottom_blank_ratio':.2}}]}))
+wp.write_text(json.dumps(word|{'checks':[last_page_pass|{'details':last_page_pass['details']|{'bottom_blank_ratio':.2}},pre_final_pass]}))
 expect('留白恰等于20%被拒绝',f.cmd_delivery(a)==2)
+wp.write_text(json.dumps(word|{'checks':[last_page_pass]}))
+expect('末页达标但缺前页实测仍被拒绝',f.cmd_delivery(a)==2)
+wp.write_text(json.dumps(word|{'audit_version':'1.12.0'}))
+expect('r12 Word 报告不能冒充新审核',f.cmd_delivery(a)==2)
 wp.write_text(json.dumps(word))
 bad_heading=copy.deepcopy(review)
 bad_heading['section_heading_review'][0]['evidence_quote']='正文不存在的措施'
@@ -121,8 +157,12 @@ for path,raw in saved_reports.items():path.write_bytes(raw)
 
 wp.write_text(json.dumps(word|{'document_sha256':'old version'}));expect('交付汇总拒绝旧版本Word报告',f.cmd_delivery(a)==2);wp.write_text(json.dumps(word))
 wp.write_text(json.dumps(word|{'rules_sha256':'altered'}));expect('交付汇总拒绝不同格式规则指纹',f.cmd_delivery(a)==2);wp.write_text(json.dumps(word))
-wp.write_text(json.dumps(word|{'checks':[last_page_pass,{'name':'留白人工复核','status':'WARN'}]}));expect('未关闭留白WARN不允许交付',f.cmd_delivery(a)==2)
-wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':[{'report':'word','check':'留白人工复核','status':'reviewed','evidence':'synthetic QA only','conclusion':'test'}]}));expect('处理WARN记录结构允许交付',f.cmd_delivery(a)==0)
+pre_final_warn=copy.deepcopy(pre_final_pass)
+pre_final_warn['status']='WARN'
+pre_final_warn['details']['pages'][0]['bottom_blank_ratio']=.26
+pre_final_warn['details']['review_pages']=[FRONT+1]
+wp.write_text(json.dumps(word|{'checks':[last_page_pass,pre_final_warn]}));expect('前页留白WARN未处置不允许交付',f.cmd_delivery(a)==2)
+wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':[{'report':'word','check':c.PRE_FINAL_PAGE_CHECK,'status':'reviewed','evidence':'synthetic QA only','conclusion':'test'}]}));expect('处理WARN记录结构允许交付',f.cmd_delivery(a)==0)
 # Force final stage while leaving placeholder. Both rule hashes match but embedded content blocks it.
 finalrules=rr|{'photo_delivery_stage':'final'}
 wp.write_text(json.dumps(word|{'rules':finalrules,'rules_sha256':c.rules_digest(finalrules)}))

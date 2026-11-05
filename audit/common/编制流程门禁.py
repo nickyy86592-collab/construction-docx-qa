@@ -722,6 +722,43 @@ def cmd_content_review(document, review_path):
     return emit_gate(errors,'CONTENT_REVIEW_ALLOWED')
 
 
+def word_pagination_evidence_errors(word, body_start, common, project_page_count=None):
+    def unique_check(name):
+        matches = [c for c in word.get('checks', []) if c.get('name') == name]
+        return matches[0] if len(matches) == 1 else {}
+
+    def valid_geometry(row):
+        ratio = row.get('bottom_blank_ratio')
+        return (row.get('layout_source') == 'microsoft_word_page_geometry'
+                and type(ratio) in (int, float) and 0 <= ratio <= 1)
+
+    last_page = unique_check('末页留白')
+    last = last_page.get('details') or {}
+    total_pages = last.get('document_page')
+    if (last_page.get('status') != 'PASS' or not valid_geometry(last)
+            or last['bottom_blank_ratio'] >= common.LAST_PAGE_BLANK_LIMIT
+            or type(body_start) is not int or type(total_pages) is not int or total_pages < body_start
+            or last.get('body_page') != total_pages - body_start + 1
+            or (project_page_count is not None and project_page_count != total_pages)):
+        return ['缺少当前 DOCX 的 Word 末页留白实测合格记录（须低于20%且页位一致）']
+
+    pre_final = unique_check(common.PRE_FINAL_PAGE_CHECK)
+    detail = pre_final.get('details') or {}
+    rows = detail.get('pages')
+    expected = list(common.pre_final_body_pages(total_pages, body_start))
+    if (not isinstance(rows, list) or len(rows) != len(expected)
+            or detail.get('review_ratio') != common.PRE_FINAL_PAGE_BLANK_REVIEW_RATIO
+            or any(not isinstance(row, dict) or not valid_geometry(row)
+                   or row.get('document_page') != page or row.get('body_page') != page - body_start + 1
+                   for row, page in zip(rows, expected))):
+        return ['缺少当前 DOCX 的 Word 末页前连续排版实测记录']
+    review = [row['document_page'] for row in rows
+              if row['bottom_blank_ratio'] >= common.PRE_FINAL_PAGE_BLANK_REVIEW_RATIO]
+    if detail.get('review_pages') != review or pre_final.get('status') != ('WARN' if review else 'PASS'):
+        return ['Word 末页前实测页底留白与复核状态不一致']
+    return []
+
+
 def cmd_delivery(a):
     digest=sha256(a.document)
     errors, review=validate_content_review(a.document,a.review)
@@ -773,15 +810,11 @@ def cmd_delivery(a):
     common=importlib.util.module_from_spec(spec)
     sys.modules[spec.name]=common
     spec.loader.exec_module(common)
+    if any(r.get('audit_version') != common.AUDIT_VERSION for r in (static, word)):
+        errors.append(f'静态与 Word 格式报告须使用当前硬审版本 {common.AUDIT_VERSION}')
     errors.extend(common.section_heading_review_errors(a.document, review.get('section_heading_review')))
-    last_page_checks = [c for c in word.get('checks', []) if c.get('name') == '末页留白']
-    last_page = last_page_checks[0] if len(last_page_checks) == 1 else {}
-    last_page_detail = last_page.get('details') or {}
-    ratio = last_page_detail.get('bottom_blank_ratio')
-    if (last_page.get('status') != 'PASS'
-            or last_page_detail.get('layout_source') != 'microsoft_word_page_geometry'
-            or type(ratio) not in (int, float) or not 0 <= ratio < common.LAST_PAGE_BLANK_LIMIT):
-        errors.append('缺少当前 DOCX 的 Word 末页留白实测合格记录（须低于20%）')
+    project_page_count = (reports.get('page', {}).get('actual') or {}).get('word_total_pages')
+    errors.extend(word_pagination_evidence_errors(word, rules.get('body_start_page'), common, project_page_count))
     fresh_checks = common.portable_checks(a.document,rules)
     for check in fresh_checks:
         if check.status=='FAIL':
@@ -807,6 +840,9 @@ def cmd_delivery(a):
     dispositions=warning_review.get('items') or []
     for name,r in reports.items():
         for check in r.get('checks',[]):
+            if check.get('status') == 'FAIL':
+                errors.append('报告存在硬性失败：'+name+'/'+str(check.get('name')))
+                continue
             if check.get('status') not in ('WARN','SKIP'):
                 continue
             m=[x for x in dispositions if x.get('report')==name and x.get('check')==check.get('name')]
