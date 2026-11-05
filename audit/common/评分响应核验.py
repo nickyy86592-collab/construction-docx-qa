@@ -20,6 +20,7 @@ import json
 import math
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from source_coverage import digest, scoring_basis
 
 
 def valid_num(x):
@@ -144,6 +145,7 @@ def main():
     try:
         data = json.loads(args.input.read_text(encoding='utf-8'))
         report = check(data, args.phase)
+        report['scoring_basis_sha256'] = digest(scoring_basis(data))
         report["document_sha256"]=hashlib.sha256(args.document.read_bytes()).hexdigest()
         report["checks"]=[{"name":w,"status":"WARN","message":w} for w in report.get("warnings",[])]
         if args.report:

@@ -23,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 
 from visual_policy import visual_policy_errors, visual_policy_template
+from source_coverage import coverage_errors, response_errors, final_response_errors, state_basis
 
 STATE_DEFAULT = "篇幅规划状态.json"
 STAGES = (40, 75)
@@ -113,7 +114,7 @@ def cmd_init(state_path: Path, force: bool):
     front = int(vals["FRONT_MATTER_PAGES"]) if vals else 0
 
     state = {
-        "schema_version": "3.1",
+        "schema_version": "3.2",
         "module_registry": {},
         "pilot": {},
         "startup": startup_template(),
@@ -175,6 +176,12 @@ def cmd_preflight(state_path: Path):
     state = load_state(state_path)
     if page_script is None:
         errors=startup_errors(state,state_path.parent)+detailed_plan_errors(state,state_path.parent,0)
+        state['updated_at']=now_iso()
+        state['phase']='PLANNING' if errors else 'DRAFTING_ALLOWED'
+        state['plan']['status']='NOT_READY' if errors else 'READY'
+        state['gate']['reason']=errors if errors else '原资料与内容规划已通过；无项目页数脚本，跳过页数校准'
+        state['gate']['final_ready']='BLOCKED'
+        if not errors:state['gate']['preflight_passed_at']=now_iso()
         state["gate"]["plan_hash"]=plan_hash(state)
         state["gate"]["draft_ready"]="FAIL" if errors else "PASS"
         state["gate"]["preflight"]="FAIL" if errors else "PASS"
@@ -519,7 +526,9 @@ def fresh_file(item, base):
 
 
 def startup_template():
-    return {'sources': [], 'latest_updates': {'status':'unanswered','asked_at':'','reply_text':'','reply_source':''},
+    return {'sources': [], 'source_scope': {'roots': [], 'excluded': [], 'reviewed': False, 'conclusion': ''},
+            'source_coverage': {'version': 1, 'inventory': [], 'dispositions': [], 'extraction_review': {}},
+            'latest_updates': {'status':'unanswered','asked_at':'','reply_text':'','reply_source':''},
             'critical_questions':[], 'questions_review': '',
             'batch_plan': {'count':None,'reason':'','batches':[]},
             'word_channel':'', 'word_capability_evidence':'', 'real_photo_slots':[],
@@ -564,6 +573,8 @@ def startup_errors(state, base):
     errors += visual_policy_errors(a.get('visual_policy'), slots)
     if isinstance(slots, list) and any(not isinstance(x, dict) or not x.get('name') or not x.get('location') or not x.get('basis') for x in slots):
         errors.append('已选实景图须登记主题、插入位置及价值依据')
+    if state.get('schema_version') == '3.2' or 'source_coverage' in a:
+        errors += coverage_errors(state, base)
     return errors
 
 
@@ -662,6 +673,7 @@ def validate_content_review(document, review_path):
         tree=ET.fromstring(z.read('word/document.xml'))
         ns={'w':'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
         body_text=''.join(x.text or '' for x in tree.findall('.//w:t',ns))
+    errors += final_response_errors(r, review_path.parent, body_text)
     parameters = r.get('parameters')
     if not isinstance(parameters,list) or (not parameters and not r.get('no_parameters_reason')):
         errors.append('未登记用于正文的关键参数及跨来源核对')
@@ -766,6 +778,7 @@ def cmd_delivery(a):
     page_script, vals=discover_page_script()
     if a.mode=='full':
         state=load_state(a.state)
+        errors += final_response_errors(review, a.review.parent, _manuscript(a.document)[0], a.state)
         errors+=startup_errors(state,a.state.parent)
         if (state.get('gate') or {}).get('preflight')!='PASS':
             errors.append('启动preflight未通过')
@@ -784,6 +797,13 @@ def cmd_delivery(a):
             errors.append('报告未通过或文件哈希不匹配：'+name)
         if name=='score' and r.get('phase')!='final':
             errors.append('评分报告不是最终阶段')
+        if name=='score':
+            from source_coverage import resolve as source_resolve
+            binding = (review.get('source_response_review') or {}).get('state') or {}
+            if binding.get('path'):
+                bound = load_state(source_resolve(binding['path'], a.review.parent))
+                if r.get('scoring_basis_sha256') != (bound.get('plan', {}).get('scoring_basis') or {}).get('basis_sha256'):
+                    errors.append('评分报告与原资料反查使用了不同评分条件')
         if name=='word' and r.get('layout_engine')!='Microsoft Word':
             errors.append('版式审核不是Microsoft Word')
         if name=='static' and r.get('audit_type')!='embedded_docx_static':
@@ -934,6 +954,9 @@ def planning_policy(target):
 def plan_hash(state):
     import hashlib
     plan={k:v for k,v in (state.get('plan') or {}).items() if k!='status'}
+    if state.get('schema_version') == '3.2':
+        plan['_source_coverage'] = (state.get('startup') or {}).get('source_coverage')
+        plan['_source_scope'] = (state.get('startup') or {}).get('source_scope')
     return hashlib.sha256(json.dumps(plan,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 
 
@@ -971,14 +994,19 @@ def _manuscript(path):
 REVIEW_CONTRACT = '2026-10-22'
 
 
-def module_requirements_digest(state,module):
+def module_requirements_digest(state,module,legacy=False):
     import hashlib
     reqs=[r for r in state['plan']['requirements'] if r['id'] in module['requirement_ids']]
+    if legacy:
+        reqs=[{k:v for k,v in r.items() if k not in ('source_refs','response_requirements','score_refs')} for r in reqs]
     return hashlib.sha256(json.dumps(reqs,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 
 def module_review_errors(state,module,text,review,base):
     errors=technical_review_errors(review)
+    if state.get('schema_version') == '3.2':
+        owned=[r for r in state['plan']['requirements'] if r['id'] in module.get('primary_for', [])]
+        errors += response_errors(owned, (review.get('response_review') or {}).get('checks'), text)
     language=review.get('construction_language_review') or {}
     if language.get('reviewed') is not True or (type(language.get('unresolved_count')) is not int or language.get('unresolved_count') != 0) or not language.get('conclusion'):
         errors.append('模块施工语言未复核或仍有内部审查语言待处理')
@@ -1031,7 +1059,7 @@ def registry_errors(state,base,ids=None,document=None):
         if not fresh_file({'path':row.get('review_path'),'sha256':row.get('review_sha256')},base):
             errors.append('模块核查记录丢失或改变：'+mid)
         module=next((m for m in _modules(state) if m.get('id')==mid),None)
-        if row.get('review_contract') == REVIEW_CONTRACT and module and row.get('requirements_sha256') != module_requirements_digest(state,module):
+        if row.get('review_contract') == REVIEW_CONTRACT and module and row.get('requirements_sha256') != module_requirements_digest(state,module,legacy=row.get('source_response_version') != 1):
             errors.append('模块评分/范围依据已改变，须定点复核：'+mid)
         if word_text is not None:
             quotes=row.get('probe_quotes') or []
@@ -1084,7 +1112,7 @@ def detailed_plan_errors(state,base,target):
         if not isinstance(req,dict) or not req.get('id') or not req.get('scope'):
             errors.append('内容需求缺id或实质scope');continue
         req_ids.append(req['id']);evidence=req.get('evidence') or []
-        if state.get('schema_version') == '3.1' and type(req.get('scoring')) is not bool:
+        if state.get('schema_version') in ('3.1','3.2') and type(req.get('scoring')) is not bool:
             errors.append('内容需求须由AI标记是否承担评分条件scoring：'+req['id'])
         if not evidence or any(not x.get('locator') or not fresh_file(x,base) for x in evidence):errors.append('需求缺真实资料/位置证据：'+req['id'])
     if len(req_ids)!=len(set(req_ids)):errors.append('内容需求ID重复')
@@ -1234,6 +1262,8 @@ def cmd_draft_ready(state_path):
 def cmd_module_checkpoint(state_path,mid,source_path,review_path):
     state=load_state(state_path);script,vals=discover_page_script();target=vals['EXPECTED_BODY_PAGES'] if vals else 0
     errors=production_errors(state,state_path.parent,target)+startup_errors(state,state_path.parent)
+    if state.get('schema_version') != '3.2':
+        errors.append('新编/实际变更模块须先据实补齐原资料覆盖并迁移同一状态至3.2，保留旧历史，不重新init')
     if any(x.get('status') in ('FAIL','STALE') for x in state.get('checkpoints',{}).values()) and not (mid in state.get('module_registry',{}) and state['module_registry'][mid].get('source_sha256')!=sha256(source_path)):errors.append('阶段校准FAIL尚未返修复测，禁止盲写下一模块；允许更新已保存的实际返修模块')
     module=next((x for x in _modules(state) if x.get('id')==mid),None)
     if not module:errors.append('未知模块ID')
@@ -1270,6 +1300,7 @@ def cmd_module_checkpoint(state_path,mid,source_path,review_path):
         if key!=mid and row.get('source_sha256')==sha256(source_path):errors.append('不同模块不能重复使用完全相同正文')
     if errors:return emit_gate(errors,'')
     state.setdefault('module_registry',{})[mid]={'status':'complete','source_path':str(source_path.resolve()),'source_sha256':sha256(source_path),
+        'source_response_version':1 if state.get('schema_version') == '3.2' else 0,
         'review_contract':REVIEW_CONTRACT,'requirements_sha256':module_requirements_digest(state,module),
         'review_path':str(review_path.resolve()),'review_sha256':sha256(review_path),'normal_characters':normal_chars,'probe_quotes':quotes,'saved_at':now_iso()}
     for cp in state.get('checkpoints',{}).values():

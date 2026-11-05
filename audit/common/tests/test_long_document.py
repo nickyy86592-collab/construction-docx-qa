@@ -12,7 +12,7 @@ if len(sys.argv)>1:ORIGIN=Path(sys.argv[1]);COMMON=ORIGIN/'scripts'
 else:COMMON=Path(__file__).resolve().parents[1]
 TEMPDIR=tempfile.TemporaryDirectory();BASE=Path(TEMPDIR.name)
 ROOT=BASE/'scripts';ROOT.mkdir()
-for name in ('编制流程门禁.py','Word正式交付硬审（不含页数）.py','评分响应核验.py','visual_policy.py'):shutil.copy2(COMMON/name,ROOT/name)
+for name in ('编制流程门禁.py','Word正式交付硬审（不含页数）.py','评分响应核验.py','visual_policy.py','source_coverage.py'):shutil.copy2(COMMON/name,ROOT/name)
 PAGE=ROOT/'测试项目页数硬审.py'
 PAGE.write_text('EXPECTED_BODY_PAGES = 395\nPAGE_TOLERANCE = 5\nFRONT_MATTER_PAGES = 1\n')
 sys.path.insert(0,str(ROOT))
@@ -25,7 +25,7 @@ def check(label,expr):
  RESULTS.append(label)
 def write(path,data):path.write_text(json.dumps(data,ensure_ascii=False,indent=2));return path
 def evidence(p,locator='synthetic test only'):return {'path':str(p),'sha256':f.sha256(p),'locator':locator}
-SOURCE=BASE/'tender-fixture.txt';SOURCE.write_text('Synthetic source for structure tests, not actual project evidence.')
+SOURCE=BASE/'tender-fixture.txt';SOURCE.write_text('Synthetic source for structure tests, not actual project evidence.\nfixture scope R01')
 POLICY={'version':1,'real_photos':{'decision':'required','reason':'fixture','replacement_figures':[]},
         'color_figures':{'mode':'color'},
         'additional_figures':{'names':[],'reason':'fixture baseline',
@@ -55,6 +55,16 @@ def start_case(target=395,tol=5,front=1):
  for stage,ids in boundaries.items():
   center=sum(m['planned_pages'] for m in mods if m['id'] in ids);slack=max(1,math.ceil(center*.05));ranges[stage]=[round(max(1,center-slack),2),round(center+slack,2)]
  s['plan'].update(revision=1,planned_total_body_pages=target,chapter_plan=[{'chapter':ch,'basis':'fixture weighting','page_range':[0,target]} for ch in ('第一章 技术方案','第二章 保障措施')],figure_table_pages_estimate=n,reserve_pages=reserve,planning_notes='按真实内容范围、评分责任和版面容量进行预算（fixture）',requirements=reqs,modules=mods,pilot_plan={'module_ids':[mods[0]['id'],mods[-1]['id']],'coverage':['narrative','table','figure'],'basis':'different representative content types'},capacity_review={'all_requirements_mapped':True,'scope_supports_volume':True,'no_padding_or_repetition':True,'conclusion':'fixture only','unresolved_gaps':[]},checkpoint_module_ids=boundaries,checkpoint_completion_basis={'40':'fixture completed responsibility','75':'fixture completed responsibility'},checkpoint_expected_page_ranges=ranges)
+ import source_coverage as trace
+ s['startup']['source_scope']={'roots':[str(SOURCE)],'excluded':[],'reviewed':True,'conclusion':'synthetic source inventory'}
+ rows,texts=trace.scan(s,BASE)
+ sid=s['startup']['sources'][0]['id']; units=rows[0]['units'];first=units[0]['id'];second=units[1]['id']
+ for i,r in enumerate(reqs):
+  r.update(source_refs=[{'source_id':sid,'unit_id':second if i==0 else first,'quote':r['scope'] if i==0 else 'Synthetic source for structure tests'}],response_requirements=['synthetic substantive response'],score_refs=[{'item_id':'S1','criterion_index':0}])
+  if i==0:r['scoring']=True
+ s['startup']['source_coverage'].update(dispositions=[{'unit_ids':[second],'status':'reviewed','disposition':'requirements','requirement_ids':[reqs[0]['id']],'conclusion':'synthetic scoring source'},{'unit_ids':[first],'status':'reviewed','disposition':'requirements','requirement_ids':[r['id'] for r in reqs[1:]],'conclusion':'synthetic scope source'}],extraction_review={k:{'reviewed':True,'conclusion':'synthetic source pass'} for k in ('source_pass','scoring_pass','scope_reconciliation')})
+ scores=write(BASE/f'scores-{target}.json',{'tender_source':'fixture line 2','items':[{'id':'S1','name':'fixture','source_ref':'line 2','criteria':[reqs[0]['scope']],'max_score':1}]})
+ s['plan']['scoring_basis']={'path':str(scores),'basis_sha256':trace.digest(trace.scoring_basis(json.loads(scores.read_text())))}
  f.save_state(state_path,s)
  return state_path,s
 
@@ -101,6 +111,14 @@ def module_files(m):
  text=q1+'\n'+q2+'\n';text+=('本模块'+mid+'施工执行记录用于控制工序及接口。\n')*max(1,int((m['estimated_normal_chars']-len(f._normal(text)))/24))
  src=BASE/(mid+'.md');src.write_text(text)
  rv=BASE/(mid+'-review.json');write(rv,{'module_id':mid,'source_sha256':f.sha256(src),'covered_requirement_ids':m['requirement_ids'],'fact_sources_reviewed':True,'technical_depth_reviewed':True,'interfaces_reviewed':True,'repetition_reviewed':True,'conclusion':'synthetic review','technical_review':{'version':1,'checks':{k:{'status':'reviewed','conclusion':'fixture'} for k in f.TECHNICAL_REVIEW_ITEMS}},'construction_language_review':{'reviewed':True,'unresolved_count':0,'conclusion':'synthetic language judgment'},'scoring_review':{'conditions':[],'not_applicable_reason':'fixture requirements only; no tender scoring conditions','conclusion':'synthetic responsibility judgment'},'probe_quotes':[q1,q2]})
+ data=json.loads(rv.read_text());requirements={r['id']:r for r in s['plan']['requirements']}
+ data['response_review']={'checks':[{'requirement_id':rid,'status':'adequate','conclusion':'synthetic response','aspects':[{'expectation':'synthetic substantive response','location':mid,'quote':q1,'adequacy':'adequate','conclusion':'synthetic adequacy'}]} for rid in m['primary_for']]}
+ conditions=[]
+ for rid in m['requirement_ids']:
+  if requirements[rid]['scoring']:
+   conditions.append({'requirement_id':rid,'criterion_quote':requirements[rid]['scope'],'response_quote':q1,'evidence':[evidence(SOURCE)],'targeted':True,'technical_depth':True,'project_basis':True,'substantive_response':True,'status':'satisfied','conclusion':'synthetic scoring response'})
+ if conditions:data['scoring_review']={'conditions':conditions,'conclusion':'synthetic scoring response'}
+ write(rv,data)
  return src,rv,[q1,q2]
 for m in s['plan']['modules']:
  src,rv,qs=module_files(m);MODULE_SOURCES[m['id']]=src;REVIEWS[m['id']]=rv;QUOTES[m['id']]=qs

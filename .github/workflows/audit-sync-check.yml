@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install Pillow python-docx PyYAML
+      - run: python -m pip install Pillow python-docx PyYAML pypdf openpyxl xlrd
       - name: Compile generic scripts
         run: python -m compileall -q audit/common
       - name: Test graphics, provenance, delivery, and runtime project replacement
@@ -29,6 +29,8 @@ jobs:
         run: python audit/common/tests/test_upgrade.py --report upgrade-portable.json
       - name: Test table alignment, inherited indents, widths and exceptions
         run: python audit/common/tests/test_table_layout.py --report table-portable.json
+      - name: Test original-source coverage and substantive response gates
+        run: python audit/common/tests/test_source_coverage.py
       - uses: actions/upload-artifact@v4
         with:
           name: upgrade-word-test-input-${{ github.run_id }}
@@ -78,4 +80,5 @@ jobs:
             upgrade-${{ github.run_id }}/word-table-evidence/**
             upgrade-${{ github.run_id }}/word-toc-evidence/**
           if-no-files-found: warn
+
 

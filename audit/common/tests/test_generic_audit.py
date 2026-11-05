@@ -9,7 +9,7 @@ COMMON=Path(__file__).resolve().parents[1]
 import tempfile,shutil
 _temporary=tempfile.TemporaryDirectory()
 ROOT=Path(_temporary.name)/'skill';(ROOT/'scripts').mkdir(parents=True)
-for name in ('Word正式交付硬审（不含页数）.py','编制流程门禁.py','评分响应核验.py','visual_policy.py'):
+for name in ('Word正式交付硬审（不含页数）.py','编制流程门禁.py','评分响应核验.py','visual_policy.py','source_coverage.py'):
     shutil.copy2(COMMON/name,ROOT/'scripts'/name)
 active_pages=list((COMMON.parents[1]/'input/project').glob('*页数硬审*.py'))
 assert len(active_pages)==1,'One active project page script is required'
@@ -108,6 +108,9 @@ review['technical_review']={'version':1,'checks':{k:{'status':'reviewed','conclu
                                                       for k in f.TECHNICAL_REVIEW_ITEMS},
                             'reference_targets':{k:{'status':'adapted','conclusion':'synthetic'}
                                                  for k in f.REFERENCE_TARGET_ITEMS}}
+trace_spec=importlib.util.spec_from_file_location('trace_fixture',COMMON/'tests/test_source_coverage.py')
+trace_fixture=importlib.util.module_from_spec(trace_spec);trace_spec.loader.exec_module(trace_fixture)
+review['source_response_review'],score_basis_sha=trace_fixture.make_trace(OUT,f._manuscript(passdoc)[0])
 rp=OUT/'review.json';rp.write_text(json.dumps(review));expect('4.5及4.0差异未解释被拦截',bool(f.validate_content_review(passdoc,rp)[0]))
 review['parameters'][0].update(status='resolved',resolution_evidence='Synthetic scenario: differing scopes reviewed');rp.write_text(json.dumps(review));expect('有部位解释的溯源结构通过',not f.validate_content_review(passdoc,rp)[0])
 bad=copy.deepcopy(review);bad['parameters'][0]['body_locations'][0]['quote']='正文不存在的证据';rp.write_text(json.dumps(bad));expect('虚构正文参数引用被拦截',bool(f.validate_content_review(passdoc,rp)[0]))
@@ -127,10 +130,11 @@ word={'audit_version':c.AUDIT_VERSION,'delivery_status':'PASS','document_sha256'
 # Synthetic reports test schema only. They are never represented as Word execution.
 wp=OUT/'synthetic-word.json';wp.write_text(json.dumps(word))
 pg=OUT/'synthetic-pages.json';pg.write_text(json.dumps({'status':'PASS','page_source':'microsoft_word','document_sha256':f.sha256(passdoc),'rule':{'body_pages_target':TARGET,'page_tolerance':TOLERANCE,'front_matter_pages_excluded':FRONT}}))
-sc=OUT/'synthetic-score.json';sc.write_text(json.dumps({'status':'PASS','phase':'final','document_sha256':f.sha256(passdoc),'checks':[]}))
+sc=OUT/'synthetic-score.json';sc.write_text(json.dumps({'status':'PASS','phase':'final','document_sha256':f.sha256(passdoc),'checks':[],'scoring_basis_sha256':score_basis_sha}))
 wr=OUT/'warnings.json';wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':[]}))
 a=Namespace(document=passdoc,state=statepath,mode='local-review',review=rp,static_report=staticpath,word_report=wp,page_report=pg,score_report=sc,warning_review=wr)
 expect('交付汇总schema正例允许编制稿',f.cmd_delivery(a)==0)
+score_data=json.loads(sc.read_text());sc.write_text(json.dumps(score_data|{'scoring_basis_sha256':'wrong criteria'}));expect('评分报告引用其他评分条件被拒绝',f.cmd_delivery(a)==2);sc.write_text(json.dumps(score_data))
 wp.write_text(json.dumps(word|{'checks':[]}))
 expect('缺末页实测结果的旧版报告被拒绝',f.cmd_delivery(a)==2)
 wp.write_text(json.dumps(word|{'checks':[last_page_pass|{'details':last_page_pass['details']|{'bottom_blank_ratio':.2}},pre_final_pass]}))
@@ -171,7 +175,7 @@ expect('伪改静态报告仍不能让占位冒充正式照片',f.cmd_delivery(a
 
 source.write_text(source.read_text()+' version changed');expect('来源文件改变使旧内容核验失效',bool(f.validate_content_review(passdoc,rp)[0]))
 # No-page deployment must still block absent startup.
-np=OUT/'no-page';np.mkdir(exist_ok=True);(np/'编制流程门禁.py').write_text((ROOT/'scripts/编制流程门禁.py').read_text());shutil.copy2(ROOT/'scripts/visual_policy.py',np/'visual_policy.py')
+np=OUT/'no-page';np.mkdir(exist_ok=True);(np/'编制流程门禁.py').write_text((ROOT/'scripts/编制流程门禁.py').read_text());shutil.copy2(ROOT/'scripts/visual_policy.py',np/'visual_policy.py');shutil.copy2(ROOT/'scripts/source_coverage.py',np/'source_coverage.py')
 rc=subprocess.run([sys.executable,str(np/'编制流程门禁.py'),'--state',str(np/'state.json'),'init'],capture_output=True);expect('无页数脚本仍初始化启动门禁',rc.returncode==2 and (np/'state.json').exists())
 rc=subprocess.run([sys.executable,str(np/'编制流程门禁.py'),'--state',str(np/'state.json'),'preflight'],capture_output=True);expect('无页数脚本不能绕过启动质询',rc.returncode==2)
 print(json.dumps({'passed':len(results),'tests':results,'limits':['Synthetic fixtures only; Windows Word not executed.']},ensure_ascii=False,indent=2))

@@ -1,13 +1,9 @@
 interface:
   display_name: "通用施组编制（11月巢湖）"
-  short_description: "通用施组编制：清单口径、专业复核、项目图文决策、阶段校准与Word交付审核"
-  default_prompt: "使用 $general-construction-organization-writing，基于当前项目资料按阶段编制施组；规避图纸争议、冲突以清单为主，执行五项专业复核并考虑三项非硬性经验参考，沿用启动质询、篇幅规划、长文试排、模块保存、彩色三图和额外1—3张功能图、按需照片或示意图及Word交付审核。"
+  short_description: "通用施组编制：原资料重点提取、评分对应、充分响应、原件反查与Word交付审核"
+  default_prompt: "使用 $general-construction-organization-writing，基于当前项目全部原资料逐项提取重点和评分子条件，规划并充分落实到正文，执行原件反查、既有阶段校准和Word交付审核。"
   icon_small: "assets/icon.svg"
   icon_large: "assets/icon.svg"
 policy:
   allow_implicit_invocation: true
-  products:
-  - "chatgpt"
-  - "codex"
-  - "api"
-  - "atlas"
+  products: ["chatgpt", "codex", "api", "atlas"]
