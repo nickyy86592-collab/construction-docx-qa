@@ -1,22 +1,6 @@
 {
-  "mode": "bundle",
-  "requests": [
-    {
-      "mode": "fonts",
-      "output_folder": "fonts"
-    },
-    {
-      "mode": "measure",
-      "document": "report.docx",
-      "output_folder": "report",
-      "measurement_role": "terminal_final_review_note",
-      "update_fields": true,
-      "freeze_output": true,
-      "format_audit": false,
-      "page_audit": false
-    }
-  ],
-  "payload_sha256": "169bfeece34fd3551bc4194671a977486b5faa2be4a4a5945934784beae2ac1c",
-  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-22c4-81fa-8362-611f1277e441/raw?se=2026-10-21T04%3A34%3A11Z&sp=r&sv=2026-02-06&sr=b&scid=01a15c71-cfa0-71a1-abd7-18780f78cd64&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-21T02%3A47%3A19Z&ske=2026-10-22T02%3A47%3A19Z&sks=b&skv=2026-02-06&sig=lXk98nrLd/Lm/VfKK%2BRxotllCwRXRdy8acE3G8H0lSc%3D",
-  "note": "Report-only native Word pagination and existing runner fonts for internal Chinese visual QA. Main final construction document remains unchanged and already verified."
+  "project": "2026AFAGZ51333",
+  "kind": "stage-40",
+  "payload_sha256": "480dc5e4843566425a83300b28806af339e27f64fdd5d763a32c7b3c176a81ec",
+  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-5630-81fa-a564-7eec0f4eeb45/raw?se=2026-11-12T04%3A02%3A32Z&sp=r&sv=2026-06-06&sr=b&scid=01a1cdc8-d591-7765-b05e-66007971692a&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-11-12T01%3A40%3A22Z&ske=2026-11-13T01%3A40%3A22Z&sks=b&skv=2026-06-06&sig=Lai6jMfdO2nZFhtg/%2BVUkHZwubSXIjPwOExR2vpndtA%3D"
 }
