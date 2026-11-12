@@ -1,6 +1,6 @@
 {
   "project": "2026AFAGZ51333",
-  "kind": "calibrate",
-  "payload_sha256": "678383de35a43550b4b9c6b96894baa6fe5b614acb50c83acf3bcedad83f2f4f",
-  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-9a78-81fa-8bd8-b824dd963b22/raw?se=2026-11-12T04%3A34%3A20Z&sp=r&sv=2026-06-06&sr=b&scid=01a1cdc8-d591-7765-b05e-66007971692a&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-11-12T00%3A54%3A21Z&ske=2026-11-13T00%3A54%3A21Z&sks=b&skv=2026-06-06&sig=x4z3WNpbtVxiWfOAVQO8EjZi%2Bk/xSTUE5g0Yor/%2B3vM%3D"
+  "kind": "choose",
+  "payload_sha256": "77efa87d8795a194aeb057e7f3407f69b1654f417b2a2a0765aeb6eadafc63c8",
+  "download_url": "https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-7db4-81fa-a36c-fec943a7376c/raw?se=2026-11-12T04%3A41%3A47Z&sp=r&sv=2026-06-06&sr=b&scid=01a1cdc8-d591-7765-b05e-66007971692a&skoid=b7fc319f-b93c-4fac-ba5f-14fdc3f9209f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-11-12T02%3A01%3A49Z&ske=2026-11-13T02%3A01%3A49Z&sks=b&skv=2026-06-06&sig=q2uWki5fAR8C45P5ES9vwU0vJaalwU7xOwv0PLc8Wu8%3D"
 }
