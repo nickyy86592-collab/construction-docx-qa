@@ -189,7 +189,9 @@ def word_suite(base):
    import zipfile
    paragraphs=[]
    def para(text,level=None):
-    props='<w:pPr><w:outlineLvl w:val="'+str(level-1)+'"/></w:pPr>' if level else '<w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9638"/></w:tabs></w:pPr>'
+    alignment=c.HEADING_ALIGNMENT_DEFAULT[str(level)] if level else None
+    props=(f'<w:pPr><w:jc w:val="{alignment}"/><w:outlineLvl w:val="{level-1}"/></w:pPr>' if level
+           else '<w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9638"/></w:tabs></w:pPr>')
     paragraphs.append('<w:p>'+props+'<w:r><w:t xml:space="preserve">'+escape(text).replace('\t','</w:t><w:tab/><w:t xml:space="preserve">')+'</w:t></w:r></w:p>')
    def newpage():paragraphs.append('<w:p><w:r><w:br w:type="page"/></w:r></w:p>')
    if front:
@@ -213,7 +215,19 @@ def word_suite(base):
     check('Word actual layout '+kind,not [x for x in checks if x.status=='FAIL'])
     toc_checks=c.check_toc_layout_word(doc,records,headings,rules)
     check('Word actual TOC alignment '+kind,not [x for x in toc_checks if x.status in ('FAIL','WARN')])
+    alignment=c.check_heading_alignment(headings,rules,doc)
+    check('Word body heading alignment '+kind,alignment.status=='PASS'
+          and alignment.details['checked_headings']==3
+          and alignment.details['alignment_by_level']==c.HEADING_ALIGNMENT_DEFAULT)
     doc.ExportAsFixedFormat(str((page/'fixture.word.pdf').resolve()),17)
+    second=next(h for h in headings if h['level']==2)
+    third=next(h for h in headings if h['level']==3)
+    doc.Paragraphs(second['index']).Format.Alignment=0
+    doc.Paragraphs(third['index']).Format.Alignment=1
+    alignment=c.check_heading_alignment(headings,rules,doc)
+    check('Word rejects misaligned body headings '+kind,alignment.status=='FAIL'
+          and [(row['level'],row['expected'],row['actual']) for row in alignment.details]
+          ==[(2,'center','left'),(3,'left','center')])
    finally:doc.Close(False)
   # Real Word integration fixture: never executed by the portable branch.
   # Keep evidence outside TemporaryDirectory so exported pages remain reviewable.

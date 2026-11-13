@@ -23,9 +23,11 @@ from datetime import datetime
 from pathlib import Path
 
 from visual_policy import visual_policy_errors, visual_policy_template
-from source_coverage import coverage_errors, response_errors, final_response_errors, state_basis
+from source_coverage import coverage_errors, response_errors, final_response_errors, state_basis, digest
 
 STATE_DEFAULT = "篇幅规划状态.json"
+DELIVERY_RESULT_DEFAULT = "流程交付结果.json"
+DELIVERY_RESULT_VERSION = 2
 STAGES = (40, 75)
 PAGE_DIR = None
 
@@ -101,10 +103,10 @@ def current_rule(page_script, vals):
 def cmd_init(state_path: Path, force: bool):
     page_script, vals = discover_page_script()
 
-    if state_path.exists() and not force:
+    if state_path.exists():
         print("FLOW_GATE_STATUS=BLOCKED")
         print(f"STATE_EXISTS={state_path}")
-        print("请继续完成规划并运行 preflight；如需重置请使用 init --force")
+        print("已有状态不得覆盖或用--force清除历史；接续同一状态，新项目使用新的状态路径")
         return 2
 
     if vals and (any(type(vals[k]) is not int for k in ("EXPECTED_BODY_PAGES","PAGE_TOLERANCE","FRONT_MATTER_PAGES")) or vals["EXPECTED_BODY_PAGES"]<=0 or vals["PAGE_TOLERANCE"]<0 or vals["FRONT_MATTER_PAGES"]<0):
@@ -167,6 +169,8 @@ def cmd_init(state_path: Path, force: bool):
 
 def _rule_mismatch(state, page_script, vals):
     rule = state.get("page_rule") or {}
+    if page_script is None:
+        return ['项目页数脚本丢失，不能将原项目降为无页数门禁'] if rule else []
     expected = current_rule(page_script, vals)
     return [f"{k} 与当前页数脚本不一致" for k, v in expected.items() if rule.get(k) != v]
 
@@ -175,13 +179,15 @@ def cmd_preflight(state_path: Path):
     page_script, vals = discover_page_script()
     state = load_state(state_path)
     if page_script is None:
-        errors=startup_errors(state,state_path.parent)+detailed_plan_errors(state,state_path.parent,0)
+        errors=_rule_mismatch(state,page_script,vals)+startup_errors(state,state_path.parent)+detailed_plan_errors(state,state_path.parent,0)
         state['updated_at']=now_iso()
         state['phase']='PLANNING' if errors else 'DRAFTING_ALLOWED'
         state['plan']['status']='NOT_READY' if errors else 'READY'
         state['gate']['reason']=errors if errors else '原资料与内容规划已通过；无项目页数脚本，跳过页数校准'
         state['gate']['final_ready']='BLOCKED'
-        if not errors:state['gate']['preflight_passed_at']=now_iso()
+        if not errors:
+            state['gate']['preflight_passed_at']=now_iso()
+            state['gate']['startup_sha256']=digest(state.get('startup'))
         state["gate"]["plan_hash"]=plan_hash(state)
         state["gate"]["draft_ready"]="FAIL" if errors else "PASS"
         state["gate"]["preflight"]="FAIL" if errors else "PASS"
@@ -281,6 +287,7 @@ def cmd_preflight(state_path: Path):
     state["plan"]["status"] = "READY"
     state["gate"]["preflight"] = "PASS"
     state["gate"]["preflight_passed_at"] = now_iso()
+    state['gate']['startup_sha256'] = digest(state.get('startup'))
     state["gate"]["final_ready"] = "BLOCKED"
     save_state(state_path, state)
 
@@ -336,9 +343,13 @@ def cmd_checkpoint(
     allow_estimate: bool,
     note: str,
     document: Path,
+    score_report_path: Path | None = None,
 ):
     page_script, vals = discover_page_script()
     if page_script is None:
+        errors = _rule_mismatch(load_state(state_path), page_script, vals)
+        if errors:
+            return emit_gate(errors, '')
         print("FLOW_GATE_STATUS=SKIP")
         return 0
 
@@ -349,6 +360,7 @@ def cmd_checkpoint(
         return 2
 
     errors = _rule_mismatch(state, page_script, vals)+startup_errors(state,state_path.parent)+production_errors(state,state_path.parent,vals["EXPECTED_BODY_PAGES"])+checkpoint_modules_errors(state,state_path.parent,stage,document)
+    errors += stage_score_errors(state, document, stage, score_report_path)
     if stage==75 and (state.get("checkpoints",{}).get("40",{}).get("status") not in ("PASS","PROVISIONAL")):
         errors.append("75%前必须完成40%校准")
     if errors:
@@ -420,6 +432,7 @@ def cmd_checkpoint(
         "page_source": source,
         "status": status,
         "note": note,
+        "score_report": {"path": str(score_report_path.resolve()), "sha256": sha256(score_report_path)},
     }
     if report_meta:
         cp["word_report"] = report_meta
@@ -451,8 +464,7 @@ def cmd_final_ready(state_path: Path, document=None):
     state = load_state(state_path)
     errors = startup_errors(state,state_path.parent)
     page_script,vals=discover_page_script()
-    if page_script:
-        errors += _rule_mismatch(state,page_script,vals)
+    errors += _rule_mismatch(state,page_script,vals)
 
     errors += production_errors(state,state_path.parent,vals["EXPECTED_BODY_PAGES"] if vals else 0)
     if document is None:
@@ -468,7 +480,9 @@ def cmd_final_ready(state_path: Path, document=None):
         if not isinstance(cp, dict):
             errors.append(f"缺少 {stage}% 阶段 checkpoint")
             continue
-        if not fresh_file({"path":cp.get("snapshot_path",""),"sha256":cp.get("document_sha256")},state_path.parent):
+        snapshot_path = cp.get("snapshot_path")
+        snapshot_fresh = fresh_file({"path": snapshot_path, "sha256": cp.get("document_sha256")}, state_path.parent)
+        if not snapshot_fresh:
             errors.append(f"{stage}%快照缺失或已改变")
         if any(state.get("module_registry",{}).get(mid,{}).get("source_sha256")!=h for mid,h in cp.get("module_source_hashes",{}).items()):
             errors.append(f"{stage}%阶段模块源已改变，须重新测量")
@@ -479,6 +493,12 @@ def cmd_final_ready(state_path: Path, document=None):
             errors.append(f"{stage}% 阶段 checkpoint 不是 PASS")
         if cp.get("page_source") != "microsoft_word":
             errors.append(f"{stage}% 阶段尚未使用 Microsoft Word 实测")
+        score = cp.get('score_report') or {}
+        if not fresh_file(score, state_path.parent):
+            errors.append(f'{stage}%阶段评分核验缺失或已改变；保留Word实测，据实补当前校核，不补造历史')
+        elif snapshot_fresh:
+            errors += stage_score_errors(state, _resolve_record(snapshot_path, state_path.parent), stage,
+                                         _resolve_record(score['path'], state_path.parent))
 
     state["updated_at"] = now_iso()
     if errors:
@@ -519,7 +539,7 @@ def sha256(path):
 
 
 def fresh_file(item, base):
-    p = Path(item.get('path',''))
+    p = Path(item.get('path') or '')
     if not p.is_absolute():
         p = base/p
     return bool(p.is_file() and item.get('sha256') == sha256(p))
@@ -548,8 +568,11 @@ def startup_errors(state, base):
             if not x.get('role') or not fresh_file(x,base):
                 errors.append('资料缺失或版本哈希已改变：'+str(x.get('path')))
     latest = a.get('latest_updates') or {}
-    if latest.get('status') not in ('confirmed_none','provided') or not all(latest.get(x) for x in ('asked_at','reply_text','reply_source')):
+    if latest.get('status') not in ('confirmed_none','provided','authorized_current_sources') or not all(latest.get(x) for x in ('asked_at','reply_text','reply_source')):
         errors.append('最新澄清/答疑/补遗/补充文件/系统要求尚无用户明确答复及来源')
+    if latest.get('status') == 'authorized_current_sources' and not all(
+            isinstance(latest.get(k), str) and latest[k].strip() for k in ('safe_scope', 'pending_confirmation')):
+        errors.append('按现有资料继续须登记用户授权原话、可编制范围及仍待最终确认事项')
     if latest.get('status')=='provided' and not latest.get('provided_paths'):
         errors.append('用户提供更新文件但尚未登记路径')
     if latest.get('status')=='provided' and sources:
@@ -579,7 +602,9 @@ def startup_errors(state, base):
 
 
 def emit_gate(errors, success):
+    errors = list(dict.fromkeys(errors))
     print('FLOW_GATE_STATUS='+('FAIL' if errors else 'PASS'))
+    print('TASK_COMPLETE=' + ('true' if not errors and success == 'FINAL_DELIVERY_ALLOWED' else 'false'))
     print('DELIVERY_BLOCKED' if errors else success)
     for e in errors:
         print('- '+e)
@@ -616,7 +641,7 @@ def technical_review_errors(record, final=False):
         for key in REFERENCE_TARGET_ITEMS:
             item = refs.get(key)
             if not isinstance(item, dict) or item.get('status') not in ('met', 'adapted', 'not_met') or not isinstance(item.get('conclusion'), str) or not item['conclusion'].strip():
-                errors.append('经验参考未留采用/调整回应（数值本身不作门槛）：' + key)
+                errors.append('文字量、数字密度或图表复核缺采用/调整结论：' + key)
     return errors
 
 
@@ -654,15 +679,18 @@ def validate_content_review(document, review_path):
             errors.append('缺少唯一回查记录：'+name)
             continue
         x=matched[0]
-        if x.get('status') not in ('verified','not_applicable') or not x.get('conclusion'):
+        status = x.get('status')
+        if status not in ('verified','not_applicable') or not x.get('conclusion'):
             errors.append('回查尚未关闭：'+name)
-        if x.get('status')=='verified':
+        if status=='verified':
             evidence=x.get('evidence') or []
             if not evidence or any(not v.get('locator') or not fresh_file(v,review_path.parent) for v in evidence):
                 errors.append('回查证据文件/哈希/页码条款缺失：'+name)
-        elif not x.get('reason'):
+        elif status == 'not_applicable' and not x.get('reason'):
             errors.append('不适用缺少依据：'+name)
-        if name in ('评分标准','硬性响应与否决格式','初稿原文溯源','定稿最新文件与系统要求') and x.get('status')!='verified':
+        elif status not in ('verified', 'not_applicable', 'pending', 'partial'):
+            errors.append('回查状态无效，使用verified|not_applicable；工作中可记pending|partial：'+name)
+        if name in ('评分标准','硬性响应与否决格式','初稿原文溯源','定稿最新文件与系统要求') and status=='not_applicable':
             errors.append('核心回查不能标不适用：'+name)
     latest = r.get('latest_confirmation') or {}
     if not latest.get('confirmed_at') or not latest.get('reply_source') or not latest.get('conclusion'):
@@ -771,6 +799,41 @@ def word_pagination_evidence_errors(word, body_start, common, project_page_count
     return []
 
 
+def delivery_result(a, errors, stage=None):
+    """Save truthful task status and propagate failure; never downgrade to success."""
+    errors = list(dict.fromkeys(errors))
+    formal = not errors and stage == 'final' and a.mode == 'full'
+    reports = {}
+    for key in ('static_report', 'word_report', 'page_report', 'score_report', 'review', 'warning_review'):
+        path = getattr(a, key, None)
+        if path and path.is_file():
+            reports[key] = {'path': str(path.resolve()), 'sha256': sha256(path)}
+    result = {'audit_type': 'workflow_delivery', 'version': DELIVERY_RESULT_VERSION, 'checked_at': now_iso(),
+              'document': str(a.document.resolve()), 'document_sha256': sha256(a.document),
+              'task_complete': formal, 'formal_release': formal,
+              'local_review_complete': not errors and a.mode == 'local-review',
+              'draft_delivery_allowed': not errors and stage == 'draft',
+              'status': 'FAIL' if errors else ('PASS' if formal else ('LOCAL_REVIEW_ALLOWED' if a.mode == 'local-review' else 'DRAFT_READY')),
+              'failures': errors, 'reports': reports}
+    if a.state.is_file():
+        try:
+            bound_state = load_state(a.state)
+            result['state_basis_sha256'] = state_basis(bound_state)
+            result['startup_sha256'] = digest(bound_state.get('startup'))
+        except (OSError, ValueError):
+            result.update(task_complete=False, formal_release=False, draft_delivery_allowed=False,
+                          local_review_complete=False, status='FAIL')
+            result['failures'].append('项目状态不可读，不能确认放行')
+    default_path = a.state.with_name(DELIVERY_RESULT_DEFAULT)
+    path = getattr(a, 'result', None) or default_path
+    if path.resolve() != default_path.resolve():
+        save_state(path, result)
+    save_state(default_path, result)
+    print('RESULT=' + str(path))
+    success = 'LOCAL_REVIEW_ALLOWED' if a.mode == 'local-review' else ('FINAL_DELIVERY_ALLOWED' if formal else 'DRAFT_DELIVERY_ALLOWED')
+    return emit_gate(errors, success)
+
+
 def cmd_delivery(a):
     digest=sha256(a.document)
     errors, review=validate_content_review(a.document,a.review)
@@ -782,8 +845,18 @@ def cmd_delivery(a):
         errors+=startup_errors(state,a.state.parent)
         if (state.get('gate') or {}).get('preflight')!='PASS':
             errors.append('启动preflight未通过')
-        if cmd_final_ready(a.state,a.document)!=0:
-            errors.append('阶段final-ready未通过')
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            ready = cmd_final_ready(a.state,a.document)
+        if ready != 0:
+            errors.extend(load_state(a.state).get('gate', {}).get('final_ready_reason') or ['阶段final-ready未通过'])
+        if state.get('startup', {}).get('latest_updates', {}).get('status') == 'authorized_current_sources':
+            errors.append('已授权按现有资料编制；最终最新文件仍待确认，不能正式放行')
+    else:
+        scope = review.get('local_review_scope') or {}
+        if (not all(scope.get(k) for k in ('user_quote', 'reply_source', 'scope'))
+                or not fresh_file(scope.get('base_document') or {}, a.review.parent)):
+            errors.append('局部复审须有明确用户授权范围及原稿快照；不能用切换mode消除全文流程失败')
     reports={}
     for name,path in [('static',a.static_report),('word',a.word_report),('score',a.score_report),('page',a.page_report)]:
         if path is None:
@@ -832,6 +905,10 @@ def cmd_delivery(a):
     spec.loader.exec_module(common)
     if any(r.get('audit_version') != common.AUDIT_VERSION for r in (static, word)):
         errors.append(f'静态与 Word 格式报告须使用当前硬审版本 {common.AUDIT_VERSION}')
+    alignment_checks = [check for check in word.get('checks', [])
+                        if check.get('name') == common.WORD_HEADING_ALIGNMENT_CHECK]
+    if len(alignment_checks) != 1 or alignment_checks[0].get('status') != 'PASS':
+        errors.append('缺少本稿正文标题对齐的 Word 实测通过记录')
     errors.extend(common.section_heading_review_errors(a.document, review.get('section_heading_review')))
     project_page_count = (reports.get('page', {}).get('actual') or {}).get('word_total_pages')
     errors.extend(word_pagination_evidence_errors(word, rules.get('body_start_page'), common, project_page_count))
@@ -868,9 +945,7 @@ def cmd_delivery(a):
             m=[x for x in dispositions if x.get('report')==name and x.get('check')==check.get('name')]
             if len(m)!=1 or m[0].get('status') not in ('reviewed','not_applicable') or not m[0].get('evidence') or not m[0].get('conclusion'):
                 errors.append('未处理审核提示：'+name+'/'+str(check.get('name')))
-    if errors:
-        return emit_gate(errors,'')
-    return emit_gate([], 'FINAL_DELIVERY_ALLOWED' if stage=='final' else 'DRAFT_DELIVERY_ALLOWED')
+    return delivery_result(a, errors, stage)
 
 
 def cmd_page_rule():
@@ -1181,8 +1256,7 @@ def detailed_plan_errors(state,base,target):
     return errors
 
 
-def pilot_errors(state,base,target):
-    if not planning_policy(target)['pilot_required']:return []
+def pilot_evidence_errors(state, base):
     row=state.get('pilot') or {};errors=[]
     if row.get('status')!='PASS' or row.get('page_source')!='microsoft_word':return ['长文尚无Microsoft Word样章试排PASS']
     for key in ('snapshot','report','analysis','format_rules'):
@@ -1194,10 +1268,24 @@ def pilot_errors(state,base,target):
         if not fresh_file(item,base):errors.append('样章Word导出证据改变或丢失')
     density=row.get('normal_chars_per_page')
     if not is_num(density) or density<=0:errors.append('样章缺有效文字密度')
-    else:
-        for m in _modules(state):
-            if abs(m.get('estimated_normal_chars',0)/density-m.get('text_pages',0))>max(.15,m.get('text_pages',0)*.03):errors.append('模块字符量与Word样章密度不符，先重算：'+str(m.get('id')))
     return errors
+
+
+def pilot_budget_errors(state):
+    density = state['pilot']['normal_chars_per_page']
+    errors = []
+    for module in _modules(state):
+        text_pages = module.get('text_pages', 0)
+        estimated_pages = module.get('estimated_normal_chars', 0) / density
+        if abs(estimated_pages - text_pages) > max(.15, text_pages * .03):
+            errors.append('模块字符量与Word样章密度不符，先重算：' + str(module.get('id')))
+    return errors
+
+
+def pilot_errors(state, base, target):
+    if not planning_policy(target)['pilot_required']:
+        return []
+    return pilot_evidence_errors(state, base) or pilot_budget_errors(state)
 
 
 def production_errors(state,base,target):
@@ -1205,6 +1293,8 @@ def production_errors(state,base,target):
     if (state.get('gate') or {}).get('preflight')!='PASS':errors.append('预编制规划未通过')
     if (state.get('gate') or {}).get('draft_ready')!='PASS':errors.append('draft-ready未通过，当前仅允许规划或样章')
     if (state.get('gate') or {}).get('plan_hash')!=plan_hash(state):errors.append('规划改变后未重新preflight/draft-ready')
+    if (state.get('gate') or {}).get('startup_sha256')!=digest(state.get('startup')):
+        errors.append('资料或用户授权记录改变/缺准入绑定，须据实重新preflight，不重置历史')
     errors+=pilot_errors(state,base,target)
     return errors
 
@@ -1261,7 +1351,7 @@ def cmd_draft_ready(state_path):
 
 def cmd_module_checkpoint(state_path,mid,source_path,review_path):
     state=load_state(state_path);script,vals=discover_page_script();target=vals['EXPECTED_BODY_PAGES'] if vals else 0
-    errors=production_errors(state,state_path.parent,target)+startup_errors(state,state_path.parent)
+    errors=_rule_mismatch(state,script,vals)+production_errors(state,state_path.parent,target)+startup_errors(state,state_path.parent)
     if state.get('schema_version') != '3.2':
         errors.append('新编/实际变更模块须先据实补齐原资料覆盖并迁移同一状态至3.2，保留旧历史，不重新init')
     if any(x.get('status') in ('FAIL','STALE') for x in state.get('checkpoints',{}).values()) and not (mid in state.get('module_registry',{}) and state['module_registry'][mid].get('source_sha256')!=sha256(source_path)):errors.append('阶段校准FAIL尚未返修复测，禁止盲写下一模块；允许更新已保存的实际返修模块')
@@ -1281,6 +1371,12 @@ def cmd_module_checkpoint(state_path,mid,source_path,review_path):
                 elif cp.get('page_source')=='microsoft_word':
                     wr=cp.get('word_report') or {}
                     if not fresh_file({'path':wr.get('report_file'),'sha256':wr.get('report_sha256')},state_path.parent):errors.append(f'{stage}%阶段Word报告失效')
+                score = cp.get('score_report') or {}
+                if not fresh_file(score, state_path.parent):
+                    errors.append(f'{stage}%阶段评分核验未完成或已失效，不能推进新模块')
+                elif cp.get('snapshot_path'):
+                    errors += stage_score_errors(state, _resolve_record(cp['snapshot_path'], state_path.parent), stage,
+                                                 _resolve_record(score['path'], state_path.parent))
     text,normal_chars=_manuscript(source_path);review=json.loads(review_path.read_text(encoding='utf-8-sig'))
     if len(_normal(text))<200:errors.append('模块正文源过少，不能用标题或占位冒充完成')
     if review.get('module_id')!=mid or review.get('source_sha256')!=sha256(source_path):errors.append('模块复核记录未绑定实际正文源')
@@ -1330,12 +1426,172 @@ def cmd_module_checkpoint(state_path,mid,source_path,review_path):
 
 def checkpoint_modules_errors(state,base,stage,document):
     selected=(state.get('plan') or {}).get('checkpoint_module_ids',{}).get(str(stage)) or []
-    return registry_errors(state,base,selected,document)
+    errors = registry_errors(state,base,selected,document)
+    if str(stage) not in (state.get('checkpoints') or {}):
+        later = _ids(state)[len(selected):]
+        if any(state.get('module_registry', {}).get(mid, {}).get('status') == 'complete' for mid in later):
+            errors.append(f'{stage}%之后已有模块登记，不能事后补造首次阶段通过；保留正文与缺失历史，执行明确的当前补救审查')
+    return errors
 
 
 def forecast_remaining(state,selected,actual):
     remaining=sum(m['planned_pages'] for m in _modules(state) if m['id'] not in selected)
     return round(actual+remaining+state['plan']['reserve_pages'],3)
+
+
+def _resolve_record(path, base):
+    path = Path(path)
+    return path if path.is_absolute() else base / path
+
+
+def stage_score_errors(state, document, stage, path):
+    if not path or not Path(path).is_file():
+        return [f'{stage}%须同时提供--score-report；Word测量不能替代内容/评分校核']
+    try:
+        report = json.loads(Path(path).read_text(encoding='utf-8-sig'))
+        valid = (report.get('status') == 'PASS' and str(report.get('phase')) == str(stage)
+                 and report.get('document_sha256') == sha256(document)
+                 and report.get('scoring_basis_sha256') == state.get('plan', {}).get('scoring_basis', {}).get('basis_sha256'))
+        return [] if valid else [f'{stage}%评分报告须通过且绑定同一阶段稿及当前评分依据']
+    except (OSError, ValueError, TypeError) as exc:
+        return [f'{stage}%评分报告不可读：{exc}']
+
+
+def cmd_next(state_path):
+    """Small working-set guidance; execution authority stays with the host."""
+    action, details = 'init', []
+    if state_path.is_file():
+        state = load_state(state_path)
+        base = state_path.parent
+        gate = state.get('gate') or {}
+        script, vals = discover_page_script()
+        pilot_required = planning_policy(vals['EXPECTED_BODY_PAGES'] if vals else 0)['pilot_required']
+        if (gate.get('preflight') != 'PASS' or gate.get('plan_hash') != plan_hash(state)
+                or gate.get('startup_sha256') != digest(state.get('startup')) or _rule_mismatch(state, script, vals)):
+            action = 'preflight'
+            details = ['先完成当前原资料与内容规划准入；未通过不推进新模块']
+        elif pilot_required and (problems := pilot_evidence_errors(state, base)):
+            action, details = 'pilot', problems
+        elif pilot_required and (problems := pilot_budget_errors(state)):
+            action = 'preflight'
+            details = ['保留有效Word样章，按实测文字密度重算模块预算，再运行preflight和draft-ready'] + problems
+        elif gate.get('draft_ready') != 'PASS':
+            action = 'draft-ready'
+        else:
+            stale_sources = [s.get('path') for s in state.get('startup', {}).get('sources', [])
+                             if not fresh_file(s, base) or (s.get('readable_copy') and not fresh_file(s['readable_copy'], base))]
+            if stale_sources:
+                action, details = 'preflight', ['资料版本已改变：' + str(p) for p in stale_sources]
+            else:
+                action = 'final-ready'
+                for index, module in enumerate(_modules(state)):
+                    mid = module['id']
+                    # Stop at a due stage before exposing the next new module.
+                    for stage in STAGES if script else ():
+                        prefix = state['plan']['checkpoint_module_ids'][str(stage)]
+                        if index == len(prefix):
+                            cp = state.get('checkpoints', {}).get(str(stage)) or {}
+                            score = cp.get('score_report') or {}
+                            word = cp.get('word_report') or {}
+                            fresh = (cp.get('status') in ('PASS', 'PROVISIONAL') and cp.get('module_ids') == prefix
+                                     and fresh_file({'path': cp.get('snapshot_path', ''), 'sha256': cp.get('document_sha256')}, base)
+                                     and fresh_file(score, base)
+                                     and all(state.get('module_registry', {}).get(mid, {}).get('source_sha256') == value
+                                             for mid, value in cp.get('module_source_hashes', {}).items())
+                                     and (cp.get('status') == 'PROVISIONAL' or fresh_file(
+                                         {'path': word.get('report_file', ''), 'sha256': word.get('report_sha256')}, base)))
+                            if fresh:
+                                fresh = not stage_score_errors(state, _resolve_record(cp['snapshot_path'], base), stage,
+                                                               _resolve_record(score['path'], base))
+                            if not fresh:
+                                action, details = 'checkpoint', [str(stage), '同时完成Word测量、内容校准及阶段评分核验']
+                                break
+                    if action == 'checkpoint':
+                        break
+                    problems = registry_errors(state, base, [mid])
+                    if problems:
+                        action, details = 'module-checkpoint', [mid] + problems
+                        break
+                if action == 'final-ready' and gate.get('final_ready') == 'PASS':
+                    action = 'delivery'
+                result_path = state_path.with_name(DELIVERY_RESULT_DEFAULT)
+                if action == 'delivery' and result_path.is_file():
+                    result = load_state(result_path)
+                    required = {'static_report', 'word_report', 'score_report', 'review', 'warning_review'}
+                    if script:
+                        required.add('page_report')
+                    if (result.get('audit_type') == 'workflow_delivery'
+                            and result.get('version') == DELIVERY_RESULT_VERSION and result.get('status') == 'PASS'
+                            and result.get('task_complete') is True and result.get('formal_release') is True
+                            and result.get('state_basis_sha256') == state_basis(state)
+                            and result.get('startup_sha256') == digest(state.get('startup'))
+                            and fresh_file({'path': result.get('document', ''), 'sha256': result.get('document_sha256')}, base)
+                            and required.issubset(result.get('reports', {}))
+                            and all(fresh_file(r, base) for r in result['reports'].values())):
+                        action = 'complete'
+    print(json.dumps({'next_action': action, 'details': details,
+                      'task_complete': action == 'complete', 'historical_checks_may_not_be_fabricated': True}, ensure_ascii=False))
+    return 0 if action == 'complete' else 2
+
+
+def cmd_template(a):
+    """Generate shape and file bindings only; no professional judgment is prefilled."""
+    if a.output.exists():
+        raise RuntimeError('模板输出已存在；保留并编辑原记录，不自动覆盖')
+    technical = {'version': 1, 'checks': {k: {'status': 'pending', 'conclusion': ''} for k in TECHNICAL_REVIEW_ITEMS}}
+    evidence = {'path': '', 'sha256': '', 'locator': ''}
+    if a.kind in ('parameter', 'conflict'):
+        data = {'name': '', 'status': 'pending', 'handling': '', 'source_status': '', 'decision': '',
+                'recheck': '', 'body_locations': [{'location': '', 'quote': ''}],
+                '_allowed_values': {'status': ['consistent', 'resolved', 'handled'] if a.kind == 'parameter' else ['resolved', 'handled'],
+                                    'handling': ['bill_primary', 'avoid_detail']}}
+        if a.kind == 'parameter':
+            data.update(scope='', kind='', cross_source_search='', calculation='', feasibility_basis='',
+                        occurrences=[dict(evidence, value='', unit='', scope='', role='')])
+            data['body_locations'][0].update(value='', unit='', scope='')
+        else:
+            data['evidence'] = [evidence]
+    else:
+        state = load_state(a.state)
+        if a.kind == 'module':
+            module = next((m for m in _modules(state) if m['id'] == a.id), None)
+            if not module or not a.source:
+                raise RuntimeError('模块模板须提供规划中的--id及--source')
+            reqs = {r['id']: r for r in state['plan']['requirements']}
+            data = {'module_id': a.id, 'source_sha256': sha256(a.source) if a.source.is_file() else '',
+                    'covered_requirement_ids': module['requirement_ids'],
+                    **{k: False for k in ('fact_sources_reviewed', 'technical_depth_reviewed', 'interfaces_reviewed', 'repetition_reviewed')},
+                    'conclusion': '', 'probe_quotes': ['', ''], 'technical_review': technical,
+                    'construction_language_review': {'reviewed': False, 'unresolved_count': None, 'conclusion': ''},
+                    'response_review': {'checks': []}, 'scoring_review': {'conditions': [], 'conclusion': ''}}
+            for rid in module['primary_for']:
+                data['response_review']['checks'].append({'requirement_id': rid, 'status': 'pending', 'conclusion': '',
+                    'aspects': [{'expectation': x, 'location': '', 'quote': '', 'adequacy': 'pending', 'conclusion': ''}
+                                for x in reqs[rid]['response_requirements']]})
+            for rid in module['requirement_ids']:
+                if reqs[rid].get('scoring') is True:
+                    data['scoring_review']['conditions'].append({'requirement_id': rid, 'criterion_quote': reqs[rid]['scope'],
+                        'response_quote': '', 'evidence': [evidence], 'status': 'pending', 'conclusion': '',
+                        **{k: False for k in ('targeted', 'technical_depth', 'project_basis', 'substantive_response')}})
+            if not data['scoring_review']['conditions']:
+                data['scoring_review']['not_applicable_reason'] = ''
+        else:
+            if not a.document:
+                raise RuntimeError('内容模板须提供--document')
+            data = {'document_sha256': sha256(a.document), 'technical_review': technical,
+                    'source_checks': [{'item': x, 'status': 'pending', 'conclusion': '', 'evidence': []} for x in REVIEW_ITEMS],
+                    'latest_confirmation': {'confirmed_at': '', 'reply_source': '', 'conclusion': ''},
+                    'parameters': [], 'conflicts': [], 'section_heading_review': [],
+                    'construction_language_review': {'all_paragraphs_reviewed': False, 'conclusion': ''},
+                    'visual_review': {'three_color_figures_reviewed': False, 'caption_photo_reviewed': False, 'conclusion': ''},
+                    'source_response_review': {'version': 1, 'state': {'path': str(a.state.resolve()), 'basis_sha256': state_basis(state)},
+                        'original_recheck': [], 'scoring_recheck': {'reviewed': False, 'conclusion': ''},
+                        'body_to_source_recheck': {'reviewed': False, 'conclusion': ''}, 'unresolved': [],
+                        'conclusion': '', 'module_reviews': [], 'responses': []}}
+            technical['reference_targets'] = {k: {'status': 'pending', 'conclusion': ''} for k in REFERENCE_TARGET_ITEMS}
+    save_state(a.output, data)
+    print('TEMPLATE=' + str(a.output) + '\nTEMPLATE_IS_NOT_REVIEW_EVIDENCE')
+    return 0
 
 
 def main():
@@ -1349,6 +1605,13 @@ def main():
     s.add_argument("--force", action="store_true")
 
     sub.add_parser("preflight")
+    sub.add_parser("next", help="只输出当前应完成的步骤；不将页数达标或草稿保存视为任务完成")
+    s = sub.add_parser('template', help='生成现有复核记录的空模板，不自动填PASS')
+    s.add_argument('--kind', choices=('module', 'content', 'parameter', 'conflict'), required=True)
+    s.add_argument('--output', type=Path, required=True)
+    s.add_argument('--id')
+    s.add_argument('--source', type=Path)
+    s.add_argument('--document', type=Path)
     sub.add_parser("page-rule")
     s=sub.add_parser("run-page-audit")
     s.add_argument("--document",type=Path,required=True)
@@ -1360,6 +1623,7 @@ def main():
     s.add_argument("--stage", type=int, choices=STAGES, required=True)
     s.add_argument("--document", type=Path, required=True, help="实际阶段DOCX快照，必须与报告哈希一致")
     s.add_argument("--report", type=Path, default=None, help="本机Word或远程Runner实际产出的阶段报告")
+    s.add_argument('--score-report', type=Path, required=True, help='绑定同一阶段稿的40/75评分核验报告')
     s.add_argument("--actual-pages", type=float, default=None, help="仅 LibreOffice 临时估值时使用")
     s.add_argument("--engine", default="", help="临时估值时应为 libreoffice_estimate")
     s.add_argument("--allow-estimate", action="store_true")
@@ -1386,10 +1650,15 @@ def main():
         s.add_argument("--"+arg,type=Path,required=True)
     s.add_argument("--page-report",type=Path)
     s.add_argument("--warning-review",type=Path)
+    s.add_argument('--result', type=Path, help='另存同一份交付结果，状态同目录的流程交付结果.json仍会更新')
 
     a = p.parse_args()
     PAGE_DIR=a.page_dir
     try:
+        if a.command == 'next':
+            return cmd_next(a.state)
+        if a.command == 'template':
+            return cmd_template(a)
         if a.command=="page-rule":
             return cmd_page_rule()
         if a.command=="run-page-audit":
@@ -1410,6 +1679,7 @@ def main():
                 a.allow_estimate,
                 a.note,
                 a.document,
+                a.score_report,
             )
         if a.command == "pilot":
             return cmd_pilot(a.state,a.document,a.report,a.analysis)
@@ -1426,6 +1696,29 @@ def main():
         if a.command == "status":
             return cmd_status(a.state)
     except Exception as e:
+        if a.state.is_file() and a.command in ('preflight', 'draft-ready', 'checkpoint', 'final-ready', 'delivery'):
+            try:
+                state = load_state(a.state)
+                # A parser failure must invalidate an earlier success, not leave a stale PASS.
+                key = {'preflight': 'preflight', 'draft-ready': 'draft_ready'}.get(a.command, 'final_ready')
+                state.setdefault('gate', {})[key] = 'ERROR'
+                state['gate']['reason'] = [str(e)]
+                if a.command == 'checkpoint':
+                    state.setdefault('checkpoints', {}).setdefault(str(a.stage), {})['status'] = 'ERROR'
+                save_state(a.state, state)
+            except (OSError, ValueError):
+                pass
+        if a.command == 'delivery' and a.document.is_file():
+            failures = ['交付检查执行异常：' + str(e)]
+            try:
+                delivery_result(a, failures)
+            except OSError as result_error:
+                # A failed export must not leave an earlier default PASS in force.
+                a.result = None
+                try:
+                    delivery_result(a, failures + ['交付结果写入失败：' + str(result_error)])
+                except OSError as default_error:
+                    print('无法保存失败结果：' + str(default_error), file=sys.stderr)
         print(f"FLOW_GATE_STATUS=ERROR\nERROR: {e}", file=sys.stderr)
         return 3
     return 3

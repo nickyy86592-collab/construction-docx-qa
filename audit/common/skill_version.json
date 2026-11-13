@@ -1,13 +1,13 @@
 {
   "source_skill": "general-construction-organization-writing",
-  "version": "2026-11-05-r14",
-  "format_audit_version": "1.13.0",
+  "version": "r17-粮食学院",
+  "format_audit_version": "1.14.0",
   "source_coverage_version": 1,
   "common_files_sha256": {
-    "Word正式交付硬审（不含页数）.py": "40c2da4dc9a895547fecc6fc5be44d766ad4afa3387bcebcf0c66a8fc18071bf",
+    "Word正式交付硬审（不含页数）.py": "bb95b2c3217a551a9d3ea47de0356f5a00d9bc98ba46aafc15f54c877537344b",
     "visual_policy.py": "0bc3f5568b4ada916069092ebda72ecdbd3745cc7fa8007ae91e87e3c2706dc0",
-    "编制流程门禁.py": "543bb148f98752073f7a88f9865f5a8d49c6e45ccfe43ba17d096b7a61c49951",
-    "评分响应核验.py": "7650ab43fbe175036947e0571478ce4288f3261504a37310ada2a26d901dc3a9",
-    "source_coverage.py": "383eac3c7250485b91a38305625913833628b25a28dc73e76e99c14f7241d3a9"
+    "编制流程门禁.py": "53c5509cd220ab3974e1132269dc1f983bb63695261a8ddc94f080261a7f90aa",
+    "评分响应核验.py": "f13d34cdf2c3acd4b35d78c091342bcbf965b70555bbb7b421cbe052c46ff69f",
+    "source_coverage.py": "f7652ebea2283d9c10ad444898eb9d9214a21bfd89337639977038c40c4fa05b"
   }
 }

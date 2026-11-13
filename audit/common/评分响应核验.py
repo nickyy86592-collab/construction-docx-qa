@@ -6,8 +6,8 @@
 AI 在编制前从招标评分原文提取项目清单，按需在 40%、75%、final 节点调用此脚本。
 检查来源、评分项完整性、模拟分数范围、响应位置、得分解释及计算一致性。
 
-命令：python 评分响应核验.py 项目评分清单.json --phase 40 --report score-40.json
-      python 评分响应核验.py 项目评分清单.json --phase final --report score-final.json
+python 评分响应核验.py 项目评分清单.json --phase 40 --document stage-40.docx --report score-40.json
+python 评分响应核验.py 项目评分清单.json --phase final --document final.docx --report score-final.json
 
 输入格式详见 references/03_优秀区间评分与实景图.md。
 返回码：0=PASS，2=FAIL，3=ERROR。

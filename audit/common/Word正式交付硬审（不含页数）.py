@@ -63,7 +63,11 @@ WD_OUTLINE_BODY_TEXT = 10
 WD_MAIN_TEXT_STORY = 1
 WD_TEXT_RECTANGLE = 0
 WD_SHAPE_RECTANGLE = 1
-AUDIT_VERSION = "1.13.0"
+AUDIT_VERSION = "1.14.0"
+HEADING_ALIGNMENT_DEFAULT = {'1': 'center', '2': 'center', '3': 'left'}
+WORD_HEADING_ALIGNMENT_CHECK = "正文标题对齐_Word"
+BODY_CHART_COUNT_CHECK = "正文图表数量"
+MIN_BODY_CHARTS = 15
 LAST_PAGE_BLANK_LIMIT = 0.20
 PRE_FINAL_PAGE_REVIEW_COUNT = 4
 PRE_FINAL_PAGE_BLANK_REVIEW_RATIO = 0.20
@@ -206,6 +210,7 @@ def load_rules(path: Optional[Path], page_dir=None) -> Dict[str, Any]:
     rules['front_matter'] = fm
     table_layout(rules)  # 同一运行期规则中校验表格配置
     toc_layout(rules)  # 校验运行期招标例外；不增加独立配置文件
+    heading_alignment(rules)
     patterns = rules.get('heading_patterns')
     if patterns is not None:
         if not isinstance(patterns,dict) or set(patterns)!= {'1','2','3'}:
@@ -887,6 +892,49 @@ def check_heading_level_presence(headings: List[Dict[str, Any]]) -> CheckResult:
         "存在缺少下一级标题的章或节，或正文缺少标题层级。" if failed else "每章均有节，每节均有三级标题。",
         {"counts": counts, "missing_levels": missing, "chapters_without_sections": chapters_without_sections,
          "sections_without_subheadings": sections_without_subheadings},
+    )
+
+
+def heading_alignment(rules):
+    raw = rules.get('heading_alignment', {})
+    if not isinstance(raw, dict) or set(raw) - {'1', '2', '3', 'source_ref'}:
+        raise AuditError('heading_alignment须按正文1/2/3级填写对齐，可附招标依据source_ref')
+    expected = {level: raw.get(level, value) for level, value in HEADING_ALIGNMENT_DEFAULT.items()}
+    if any(value not in ('left', 'center', 'right', 'both') for value in expected.values()):
+        raise AuditError('正文标题对齐须为left、center、right或both')
+    source = raw.get('source_ref')
+    if expected != HEADING_ALIGNMENT_DEFAULT and (not isinstance(source, str) or not source.strip()):
+        raise AuditError('偏离默认标题对齐须引用招标或有效补遗原文及位置source_ref')
+    return expected
+
+
+def check_heading_alignment(headings, rules, doc=None):
+    """Check effective paragraph alignment for body headings, including Word style inheritance."""
+    expected = heading_alignment(rules)
+    word_alignment = {0: 'left', 1: 'center', 2: 'right', 3: 'both'}
+    failures = []
+    for h in headings:
+        if doc is None:
+            actual = h['alignment']
+            location = {'body_block': h['body_block']}
+        else:
+            location = {'paragraph': h['index'], 'page': h['page']}
+            try:
+                value = int(doc.Paragraphs(h['index']).Format.Alignment)
+                actual = word_alignment.get(value, value)
+            except Exception:
+                actual = None
+        required = expected[str(h['level'])]
+        if actual != required:
+            failures.append({**location, 'level': h['level'], 'title': h['text'],
+                             'expected': required, 'actual': actual})
+    if not headings:
+        failures.append({'reason': '未识别到可核对对齐的正文标题'})
+    return CheckResult(
+        WORD_HEADING_ALIGNMENT_CHECK if doc is not None else '正文标题对齐_静态',
+        'FAIL' if failures else 'PASS',
+        '核对正文各级标题的有效段落对齐。默认一级、二级居中，三级左对齐。',
+        failures or {'checked_headings': len(headings), 'alignment_by_level': expected},
     )
 
 
@@ -1984,6 +2032,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         results.extend(check_toc_layout_word(doc, records, headings, rules))
         results.extend(check_table_layout_word(doc, rules))
         results.append(check_heading_level_presence(headings))
+        results.append(check_heading_alignment(headings, rules, doc))
         results.append(check_required_level1(headings, rules))
         results.append(check_heading_sequence(headings))
         if rules.get("hard_fail_on_mechanical_structure", True):
@@ -2115,6 +2164,10 @@ def _docx_blocks(path):
                 flags[tag] = element.get(w + 'val', '1').lower() not in ('0', 'false', 'off')
         return flags
 
+    def paragraph_alignment(node, prefix):
+        align = node.find(prefix + 'w:jc', ns)
+        return align.get(w + 'val') if align is not None else None
+
     def body_blocks(parent):
         for child in parent:
             if child.tag in (w + 'p', w + 'tbl'):
@@ -2128,11 +2181,13 @@ def _docx_blocks(path):
         styles = ET.fromstring(z.read('word/styles.xml')) if 'word/styles.xml' in z.namelist() else ET.Element('styles')
         style_nodes = {s.get(w + 'styleId'): s for s in styles.findall('w:style', ns)}
         defaults = pagination_flags(styles, 'w:docDefaults/w:pPrDefault/w:pPr/')
+        default_alignment = paragraph_alignment(styles, 'w:docDefaults/w:pPrDefault/w:pPr/') or 'left'
         default_style = next((sid for sid, s in style_nodes.items()
                               if s.get(w + 'type') == 'paragraph' and s.get(w + 'default') in ('1', 'true')), None)
         style_info = {}
         for style_id, node in style_nodes.items():
             outline = None
+            alignment = None
             caption_style = False
             pagination = {}
             seen = set()
@@ -2141,13 +2196,15 @@ def _docx_blocks(path):
                 level = node.find('w:pPr/w:outlineLvl', ns)
                 if level is not None and outline is None:
                     outline = int(level.get(w + 'val')) + 1
+                if alignment is None:
+                    alignment = paragraph_alignment(node, 'w:pPr/')
                 name = node.find('w:name', ns)
                 caption_style |= name is not None and name.get(w + 'val', '').lower() in ('caption', '题注')
                 for tag, value in pagination_flags(node, 'w:pPr/').items():
                     pagination.setdefault(tag, value)
                 parent = node.find('w:basedOn', ns)
                 node = style_nodes.get(parent.get(w + 'val')) if parent is not None else None
-            style_info[style_id] = (outline, caption_style, pagination)
+            style_info[style_id] = (outline, caption_style, pagination, alignment)
 
         body = ET.fromstring(z.read('word/document.xml')).find('w:body', ns)
         table_index = 0
@@ -2159,7 +2216,11 @@ def _docx_blocks(path):
                 table_index += 1
             style = el.find('w:pPr/w:pStyle', ns)
             style_id = style.get(w + 'val') if style is not None else default_style
-            outline, caption_style, inherited_pagination = style_info.get(style_id, (None, False, {}))
+            outline, caption_style, inherited_pagination, inherited_alignment = style_info.get(
+                style_id, (None, False, {}, None))
+            alignment = paragraph_alignment(el, 'w:pPr/') or inherited_alignment or default_alignment
+            # The package uses left-to-right Chinese headings. Word checks the rendered alignment again.
+            alignment = {'start': 'left', 'end': 'right'}.get(alignment, alignment)
             level = el.find('w:pPr/w:outlineLvl', ns)
             if level is not None:
                 outline = int(level.get(w + 'val')) + 1
@@ -2175,9 +2236,18 @@ def _docx_blocks(path):
             framed = any(b.get('{'+ns['w']+'}val') not in (None, 'nil', 'none') for b in borders)
             heights = [float(x.get('{'+ns['w']+'}val', '0'))/20 for x in el.findall('.//w:trHeight', ns)]
             drawing_count = len(el.findall('.//w:drawing', ns) or el.findall('.//w:pict', ns))
+            table_content = ()
+            if is_table:
+                table_content = tuple(
+                    tuple(normalize_spaces(''.join(x.text or '' for x in cell.iter(w + 't')))
+                          for cell in row.findall('w:tc', ns))
+                    for row in rows
+                )
             blocks.append({
                 'text': text, 'images': images, 'framed': framed, 'height_pt': max(heights, default=0),
                 'outline': outline, 'caption_style': caption_style, 'table_index': table_index if is_table else None,
+                'alignment': alignment,
+                'table_content': table_content,
                 'drawing_count': drawing_count,
                 'pagination': {} if is_table else {
                     **defaults, **inherited_pagination, **pagination_flags(el, 'w:pPr/'),
@@ -2305,7 +2375,7 @@ def section_heading_review_errors(document, review):
 
 
 def check_caption_numbering(blocks, rules):
-    """Bind each figure or data table to its own caption in document order."""
+    """Bind body objects to their captions and count distinct figures and data tables."""
     table_kinds = {item['index']: item.get('kind', 'data') for item in table_layout(rules).get('tables', [])}
     objects = {'图': [], '表': []}
     for i, block in enumerate(blocks):
@@ -2323,6 +2393,7 @@ def check_caption_numbering(blocks, rules):
 
     object_indices = set(objects['图']) | set(objects['表'])
     results = []
+    chart_counts = {}
     for label, preferred_step in (('图', 1), ('表', -1)):
         captions = {
             i: match
@@ -2376,6 +2447,26 @@ def check_caption_numbering(blocks, rules):
             else f'已核对{len(objects[label])}个{label}及其连续编号。',
             faults or {'count': len(objects[label])},
         ))
+        counted = set()
+        for i in attached:
+            block = blocks[i]
+            if label == '图':
+                if block['photo_frame'] or block['drawing_count'] != 1:
+                    continue
+                images = tuple(sorted(hashlib.sha256(pic['bytes']).hexdigest() for pic in block['images']))
+                counted.add(images or ('drawing', i))
+            elif any(cell for row in block['table_content'] for cell in row):
+                counted.add(block['table_content'])
+        chart_counts[label] = len(counted)
+    total = sum(chart_counts.values())
+    shortfall = max(0, MIN_BODY_CHARTS - total)
+    results.append(CheckResult(
+        BODY_CHART_COUNT_CHECK, 'WARN' if shortfall else 'PASS',
+        f"正文有{chart_counts['图']}个图、{chart_counts['表']}个表，合计{total}个。"
+        + (f'少于{MIN_BODY_CHARTS}个，差{shortfall}个，须补充有效图表或记录有依据的不足原因。' if shortfall else ''),
+        {'figures': chart_counts['图'], 'tables': chart_counts['表'], 'total': total,
+         'minimum': MIN_BODY_CHARTS, 'shortfall': shortfall},
+    ))
     return results
 
 
@@ -2429,10 +2520,12 @@ def portable_checks(document, rules):
     body_start = next((i for i, block in enumerate(blocks)
                        if block['outline'] == 1 and classify_heading(block['text'].strip(), rules)[0] == 1), 0)
     body_blocks = blocks[body_start:]
-    headings = [dict(block, level=block['outline']) for block in body_blocks
-                if block['outline'] in (1, 2, 3) and block['text'].strip()]
+    headings = [dict(block, level=block['outline'], body_block=i)
+                for i, block in enumerate(body_blocks, body_start + 1)
+                if block['table_index'] is None and block['outline'] in (1, 2, 3) and block['text'].strip()]
     structure = check_heading_level_presence(headings)
     out = [CheckResult('静态' + structure.name, structure.status, structure.message, structure.details)]
+    out.append(check_heading_alignment(headings, rules))
     out.extend([check_section_title_punctuation(body_blocks, rules), check_body_flow_static(body_blocks, rules)])
     out.extend(check_caption_numbering(body_blocks, rules))
     configured = rules.get('required_figures')
@@ -2524,7 +2617,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="通用 Word 正式交付硬审脚本（不含页数目标审核）")
     p.add_argument("document", type=Path, help="待审 Word 文件路径")
     p.add_argument("--page-dir",type=Path,default=None,help="当前唯一项目页数脚本目录，自动派生正文页定位")
-    p.add_argument("--static-only", action="store_true", help="跨平台静态检测标题层级、图表编号、嵌入彩图、照片框及内部语言，不代表Word版式验收")
+    p.add_argument("--static-only", action="store_true", help="静态检测标题层级与对齐、图表编号与数量、彩图、照片框及内部语言")
     p.add_argument("--rules", type=Path, default=None, help="项目规则 JSON（可选）")
     p.add_argument("--report", type=Path, default=None, help="审查报告 JSON 输出路径（可选）")
     p.add_argument("--evidence-dir", type=Path, default=None, help="彩图留白异常页证据输出目录（可选；默认与报告同目录）")

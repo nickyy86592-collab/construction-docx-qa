@@ -2,6 +2,7 @@ from pathlib import Path
 import importlib.util,sys,hashlib,json,copy,subprocess
 from PIL import Image,ImageDraw
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches,Pt
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -31,6 +32,9 @@ policy={'version':1,
 rules={'visual_policy':policy,'required_figures':[{'name':n,'keywords':[n],'hard':True,'color_required':True} for n in names],'required_real_photo_slots':[{'name':'现场沟塘'}],'photo_delivery_stage':'draft','font_rules':{},'required_level1_titles':[]}
 def make_doc(path, gray=False,photo=True,editorial=False,same=False,border=True,frame_text=True):
  d=Document();d.add_paragraph('测试项目施工组织设计');toc=d.add_paragraph('第一章 施工部署\t2')
+ for level, alignment in enumerate((WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.CENTER,
+                                    WD_ALIGN_PARAGRAPH.LEFT), start=1):
+  d.styles[f'Heading {level}'].paragraph_format.alignment = alignment
  from docx.enum.text import WD_TAB_ALIGNMENT,WD_TAB_LEADER
  toc.paragraph_format.tab_stops.add_tab_stop(Inches(6),WD_TAB_ALIGNMENT.RIGHT,WD_TAB_LEADER.DOTS)
  d.add_heading('第一章 施工部署',level=1)
@@ -104,6 +108,9 @@ review={'document_sha256':f.sha256(passdoc),'source_checks':[{'item':n,'status':
 review['section_heading_review']=[{'chapter':'第一章 施工部署','section':'第一节 材料进场与工序准备',
                                    'criterion':'材料报审重点','evidence_quote':'路面强度按4.5MPa进行材料报审。'}]
 review['parameters'][0]['kind']='project_fact'
+base_doc=OUT/'original.docx';shutil.copy2(passdoc,base_doc)
+review['local_review_scope']={'user_quote':'Synthetic request for local review','reply_source':'fixture',
+                             'scope':'fixture review only','base_document':{'path':str(base_doc),'sha256':f.sha256(base_doc)}}
 review['technical_review']={'version':1,'checks':{k:{'status':'reviewed','conclusion':'synthetic'}
                                                       for k in f.TECHNICAL_REVIEW_ITEMS},
                             'reference_targets':{k:{'status':'adapted','conclusion':'synthetic'}
@@ -126,20 +133,44 @@ last_page_pass={'name':'末页留白','status':'PASS','details':geometry|{'docum
 pre_final_pass={'name':c.PRE_FINAL_PAGE_CHECK,'status':'PASS','details':{
  'review_ratio':c.PRE_FINAL_PAGE_BLANK_REVIEW_RATIO,'review_pages':[],
  'pages':[geometry|{'document_page':FRONT+1,'body_page':1}]}}
-word={'audit_version':c.AUDIT_VERSION,'delivery_status':'PASS','document_sha256':f.sha256(passdoc),'layout_engine':'Microsoft Word','rules':rr,'rules_sha256':c.rules_digest(rr),'photo_delivery_stage':'draft','checks':[last_page_pass,pre_final_pass]}
+heading_pass={'name':c.WORD_HEADING_ALIGNMENT_CHECK,'status':'PASS',
+              'details':{'checked_headings':3,'alignment_by_level':c.HEADING_ALIGNMENT_DEFAULT}}
+chart_check=next(x for x in json.loads(staticpath.read_text())['checks'] if x['name']==c.BODY_CHART_COUNT_CHECK)
+expect('正文图表不足15个出警告且不把照片框计入',chart_check['status']=='WARN'
+       and chart_check['details']=={'figures':3,'tables':0,'total':3,'minimum':15,'shortfall':12})
+format_checks=[heading_pass,chart_check]
+word={'audit_version':c.AUDIT_VERSION,'delivery_status':'PASS','document_sha256':f.sha256(passdoc),'layout_engine':'Microsoft Word','rules':rr,'rules_sha256':c.rules_digest(rr),'photo_delivery_stage':'draft','checks':format_checks+[last_page_pass,pre_final_pass]}
 # Synthetic reports test schema only. They are never represented as Word execution.
 wp=OUT/'synthetic-word.json';wp.write_text(json.dumps(word))
 pg=OUT/'synthetic-pages.json';pg.write_text(json.dumps({'status':'PASS','page_source':'microsoft_word','document_sha256':f.sha256(passdoc),'rule':{'body_pages_target':TARGET,'page_tolerance':TOLERANCE,'front_matter_pages_excluded':FRONT}}))
 sc=OUT/'synthetic-score.json';sc.write_text(json.dumps({'status':'PASS','phase':'final','document_sha256':f.sha256(passdoc),'checks':[],'scoring_basis_sha256':score_basis_sha}))
-wr=OUT/'warnings.json';wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':[]}))
+chart_dispositions=[{'report':name,'check':c.BODY_CHART_COUNT_CHECK,'status':'reviewed',
+                     'evidence':'Fixture contains three figures and no data table',
+                     'conclusion':'Synthetic shortfall exercise only'} for name in ('static','word')]
+wr=OUT/'warnings.json';wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':chart_dispositions}))
 a=Namespace(document=passdoc,state=statepath,mode='local-review',review=rp,static_report=staticpath,word_report=wp,page_report=pg,score_report=sc,warning_review=wr)
 expect('交付汇总schema正例允许编制稿',f.cmd_delivery(a)==0)
+wp.write_text(json.dumps(word|{'checks':[chart_check,last_page_pass,pre_final_pass]}))
+expect('缺正文标题对齐的Word实测记录被拒绝',f.cmd_delivery(a)==2)
+wp.write_text(json.dumps(word))
+wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':chart_dispositions[:1]}))
+expect('图表数量警告须核对两份报告',f.cmd_delivery(a)==2)
+wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':chart_dispositions}))
+charts_doc=Document(passdoc)
+for index in range(1,13):
+ charts_doc.add_paragraph(f'表{index} 材料计划',style='Caption')
+ charts_doc.add_table(rows=1,cols=2).cell(0,0).text=f'计划批次 {index}'
+charts_path=OUT/'15-body-charts.docx'
+charts_doc.save(charts_path)
+chart_result=next(x for x in c.portable_checks(charts_path,rr) if x.name==c.BODY_CHART_COUNT_CHECK)
+expect('3张正文图加12张数据表合计15个通过',chart_result.status=='PASS'
+       and chart_result.details=={'figures':3,'tables':12,'total':15,'minimum':15,'shortfall':0})
 score_data=json.loads(sc.read_text());sc.write_text(json.dumps(score_data|{'scoring_basis_sha256':'wrong criteria'}));expect('评分报告引用其他评分条件被拒绝',f.cmd_delivery(a)==2);sc.write_text(json.dumps(score_data))
-wp.write_text(json.dumps(word|{'checks':[]}))
+wp.write_text(json.dumps(word|{'checks':format_checks}))
 expect('缺末页实测结果的旧版报告被拒绝',f.cmd_delivery(a)==2)
-wp.write_text(json.dumps(word|{'checks':[last_page_pass|{'details':last_page_pass['details']|{'bottom_blank_ratio':.2}},pre_final_pass]}))
+wp.write_text(json.dumps(word|{'checks':format_checks+[last_page_pass|{'details':last_page_pass['details']|{'bottom_blank_ratio':.2}},pre_final_pass]}))
 expect('留白恰等于20%被拒绝',f.cmd_delivery(a)==2)
-wp.write_text(json.dumps(word|{'checks':[last_page_pass]}))
+wp.write_text(json.dumps(word|{'checks':format_checks+[last_page_pass]}))
 expect('末页达标但缺前页实测仍被拒绝',f.cmd_delivery(a)==2)
 wp.write_text(json.dumps(word|{'audit_version':'1.12.0'}))
 expect('r12 Word 报告不能冒充新审核',f.cmd_delivery(a)==2)
@@ -154,7 +185,7 @@ d=Document(passdoc);d.add_paragraph('疑似符号需结合原图核对。');d.sa
 for path in saved_reports:
  data=json.loads(path.read_text());data['document_sha256']=f.sha256(passdoc);path.write_text(json.dumps(data))
 expect('新增语境WARN不能借旧静态报告绕过处置',f.cmd_delivery(a)==2)
-wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':[{'report':'static','check':'正文异常用语_语境复核','status':'reviewed','evidence':'Synthetic exercise: wording belongs to internal review and must be fixed before production','conclusion':'fixture only; no actual delivery'}]}))
+wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':chart_dispositions+[{'report':'static','check':'正文异常用语_语境复核','status':'reviewed','evidence':'Synthetic exercise: wording belongs to internal review and must be fixed before production','conclusion':'fixture only; no actual delivery'}]}))
 expect('语境WARN沿用已有处置机制',f.cmd_delivery(a)==0)
 passdoc.write_bytes(saved_doc)
 for path,raw in saved_reports.items():path.write_bytes(raw)
@@ -165,8 +196,8 @@ pre_final_warn=copy.deepcopy(pre_final_pass)
 pre_final_warn['status']='WARN'
 pre_final_warn['details']['pages'][0]['bottom_blank_ratio']=.26
 pre_final_warn['details']['review_pages']=[FRONT+1]
-wp.write_text(json.dumps(word|{'checks':[last_page_pass,pre_final_warn]}));expect('前页留白WARN未处置不允许交付',f.cmd_delivery(a)==2)
-wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':[{'report':'word','check':c.PRE_FINAL_PAGE_CHECK,'status':'reviewed','evidence':'synthetic QA only','conclusion':'test'}]}));expect('处理WARN记录结构允许交付',f.cmd_delivery(a)==0)
+wp.write_text(json.dumps(word|{'checks':format_checks+[last_page_pass,pre_final_warn]}));expect('前页留白WARN未处置不允许交付',f.cmd_delivery(a)==2)
+wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':chart_dispositions+[{'report':'word','check':c.PRE_FINAL_PAGE_CHECK,'status':'reviewed','evidence':'synthetic QA only','conclusion':'test'}]}));expect('处理WARN记录结构允许交付',f.cmd_delivery(a)==0)
 # Force final stage while leaving placeholder. Both rule hashes match but embedded content blocks it.
 finalrules=rr|{'photo_delivery_stage':'final'}
 wp.write_text(json.dumps(word|{'rules':finalrules,'rules_sha256':c.rules_digest(finalrules)}))

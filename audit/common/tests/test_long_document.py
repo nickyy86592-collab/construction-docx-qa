@@ -140,12 +140,17 @@ compose(SNAP40,s['plan']['checkpoint_module_ids']['40']);compose(SNAP75,s['plan'
 def checkpoint_report(stage,path,actual):
  return {'page_source':'microsoft_word','status':'MEASURED','stage_percent':stage,'document_sha256':f.sha256(path),'project_rule':{'target_body_pages':395,'page_tolerance':5,'front_matter_pages_excluded':1},'actual':{'word_body_pages':actual,'word_version':'synthetic-fixture'}}
 CP40=BASE/'cp40-fixture.json';CP75=BASE/'cp75-fixture.json'
-write(CP75,checkpoint_report(75,SNAP75,292));check('75 before 40 blocked',f.cmd_checkpoint(STATE,75,CP75,None,'',False,'fixture',SNAP75)==2)
+def score_report(stage, path):
+ return write(BASE/f'score-{stage}-fixture.json',{'status':'PASS','phase':str(stage),
+              'document_sha256':f.sha256(path),'scoring_basis_sha256':s['plan']['scoring_basis']['basis_sha256']})
+SCORE40=score_report(40,SNAP40)
+SCORE75=score_report(75,SNAP75)
+write(CP75,checkpoint_report(75,SNAP75,292));check('75 before 40 blocked',f.cmd_checkpoint(STATE,75,CP75,None,'',False,'fixture',SNAP75,SCORE75)==2)
 write(CP40,checkpoint_report(40,SNAP40,156)|{'document_sha256':'wrong'})
-try:f.cmd_checkpoint(STATE,40,CP40,None,'',False,'fixture',SNAP40);wrong_hash=False
+try:f.cmd_checkpoint(STATE,40,CP40,None,'',False,'fixture',SNAP40,SCORE40);wrong_hash=False
 except RuntimeError:wrong_hash=True
 check('Checkpoint rejects report from another document',wrong_hash)
-write(CP40,checkpoint_report(40,SNAP40,162));check('Stage page range can fit but final forecast too long is blocked',f.cmd_checkpoint(STATE,40,CP40,None,'',False,'fixture',SNAP40)==2)
+write(CP40,checkpoint_report(40,SNAP40,162));check('Stage page range can fit but final forecast too long is blocked',f.cmd_checkpoint(STATE,40,CP40,None,'',False,'fixture',SNAP40,SCORE40)==2)
 check('Failed forecast freezes further writing',f.cmd_module_checkpoint(STATE,'M20',MODULE_SOURCES['M20'],REVIEWS['M20'])==2)
 failed_state=f.load_state(STATE);oldsource=MODULE_SOURCES['M01'].read_bytes();oldreview=REVIEWS['M01'].read_bytes()
 MODULE_SOURCES['M01'].write_bytes(oldsource+'\n返修补充本工序接口控制与检查记录。'.encode());repair=json.loads(oldreview);repair['source_sha256']=f.sha256(MODULE_SOURCES['M01']);write(REVIEWS['M01'],repair)
@@ -153,11 +158,14 @@ check('Failed stage permits actual revision of a saved module',f.cmd_module_chec
 check('Revision makes existing stage snapshot stale',f.load_state(STATE)['checkpoints']['40']['status']=='STALE')
 MODULE_SOURCES['M01'].write_bytes(oldsource);REVIEWS['M01'].write_bytes(oldreview);f.save_state(STATE,failed_state)
 
-write(CP40,checkpoint_report(40,SNAP40,156));check('Measured 40 schema passes after corrected evidence',f.cmd_checkpoint(STATE,40,CP40,None,'',False,'fixture',SNAP40)==0)
+write(CP40,checkpoint_report(40,SNAP40,156))
+check('Word measurement requires score evidence for the same draft',f.cmd_checkpoint(STATE,40,CP40,None,'',False,'fixture',SNAP40)==2
+      and f.cmd_checkpoint(STATE,40,CP40,None,'',False,'fixture',SNAP40,SCORE75)==2)
+check('Measured 40 schema passes after corrected evidence',f.cmd_checkpoint(STATE,40,CP40,None,'',False,'fixture',SNAP40,SCORE40)==0)
 for m in s['plan']['modules'][8:15]:check('Persist '+m['id'],f.cmd_module_checkpoint(STATE,m['id'],MODULE_SOURCES[m['id']],REVIEWS[m['id']])==0)
 check('Cannot write beyond 75-percent node before calibration',f.cmd_module_checkpoint(STATE,'M16',MODULE_SOURCES['M16'],REVIEWS['M16'])==2)
 check('Final-ready missing second checkpoint blocked',f.cmd_final_ready(STATE,FINAL)==2)
-check('Measured 75 schema passes',f.cmd_checkpoint(STATE,75,CP75,None,'',False,'fixture',SNAP75)==0)
+check('Measured 75 schema passes',f.cmd_checkpoint(STATE,75,CP75,None,'',False,'fixture',SNAP75,SCORE75)==0)
 for m in s['plan']['modules'][15:]:check('Persist '+m['id'],f.cmd_module_checkpoint(STATE,m['id'],MODULE_SOURCES[m['id']],REVIEWS[m['id']])==0)
 check('Full merged source probes permit final audit',f.cmd_final_ready(STATE,FINAL)==0)
 PARTIAL=BASE/'only-probes.docx';pd=Document()
@@ -166,6 +174,8 @@ for mid in f._ids(s):
 pd.save(PARTIAL);check('Keeping probes but dropping substantive module content blocked',f.cmd_final_ready(STATE,PARTIAL)==2)
 original_report=CP75.read_bytes();CP75.write_bytes(original_report+b'\n')
 check('Changed stage Word report invalidates final readiness',f.cmd_final_ready(STATE,FINAL)==2);CP75.write_bytes(original_report)
+original_score=SCORE75.read_bytes();SCORE75.write_bytes(original_score+b'\n')
+check('Changed stage score report invalidates final readiness',f.cmd_final_ready(STATE,FINAL)==2);SCORE75.write_bytes(original_score)
 MISSING=BASE/'missing-module.docx';compose(MISSING,f._ids(s)[:-1]);check('Dropped final module blocked',f.cmd_final_ready(STATE,MISSING)==2)
 FORMAT.write_text(FORMAT.read_text()+'\n');check('Changing frozen pilot format invalidates sample',f.cmd_final_ready(STATE,FINAL)==2);write(FORMAT,{'visual_policy':POLICY,'font_rules':{},'required_level1_titles':[], 'required_figures':[{'name':n,'hard':True,'color_required':True} for n in c.FIGURE_NAMES], 'required_real_photo_slots':[{'name':'现场现状'}],'photo_delivery_stage':'draft'})
 check('Restored identical pilot format returns valid evidence',f.cmd_final_ready(STATE,FINAL)==0)
