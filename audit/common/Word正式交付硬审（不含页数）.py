@@ -2222,7 +2222,7 @@ def rules_digest(rules):
     return hashlib.sha256(json.dumps(rules, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def _docx_blocks(path):
+def _docx_blocks(path, *, text_only=False):
     import zipfile
     import xml.etree.ElementTree as ET
     ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
@@ -2301,19 +2301,23 @@ def _docx_blocks(path):
             if level is not None:
                 outline = int(level.get(w + 'val')) + 1
             images = []
-            for blip in el.findall('.//a:blip', ns):
-                rid = blip.get('{'+ns['r']+'}embed')
-                target = targets.get(rid)
-                if target:
-                    import posixpath
-                    member = posixpath.normpath('word/'+target) if not target.startswith('/') else target.lstrip('/')
-                    images.append({'member': member, 'bytes': z.read(member)})
+            if not text_only:
+                for blip in el.findall('.//a:blip', ns):
+                    rid = blip.get('{'+ns['r']+'}embed')
+                    target = targets.get(rid)
+                    if target:
+                        import posixpath
+                        member = posixpath.normpath('word/'+target) if not target.startswith('/') else target.lstrip('/')
+                        images.append({'member': member, 'bytes': z.read(member)})
             borders = el.findall('.//w:tblBorders/*', ns) + el.findall('.//w:tcBorders/*', ns)
             framed = any(b.get('{'+ns['w']+'}val') not in (None, 'nil', 'none') for b in borders)
             heights = [float(x.get('{'+ns['w']+'}val', '0'))/20 for x in el.findall('.//w:trHeight', ns)]
             drawing_count = len(el.findall('.//w:drawing', ns) or el.findall('.//w:pict', ns))
-            table_content = ()
-            if is_table:
+            table_content, table_paragraphs = (), ()
+            if is_table and text_only:
+                table_paragraphs = tuple(''.join(x.text or '' for x in p.iter(w + 't'))
+                                         for p in el.iter(w + 'p'))
+            elif is_table:
                 table_content = tuple(
                     tuple(normalize_spaces(''.join(x.text or '' for x in cell.iter(w + 't')))
                           for cell in row.findall('w:tc', ns))
@@ -2324,6 +2328,7 @@ def _docx_blocks(path):
                 'outline': outline, 'caption_style': caption_style, 'table_index': table_index if is_table else None,
                 'alignment': alignment,
                 'table_content': table_content,
+                'table_paragraphs': table_paragraphs,
                 'drawing_count': drawing_count,
                 'pagination': {} if is_table else {
                     **defaults, **inherited_pagination, **pagination_flags(el, 'w:pPr/'),
@@ -2460,9 +2465,19 @@ def body_citation_review(document, review, rules=None):
     def compact(value):
         return re.sub(r"\s+", "", unicodedata.normalize("NFKC", value))
 
+    def heading_title(text, level):
+        text = unicodedata.normalize("NFKC", text)
+        numbering = r"^(?:第[一二三四五六七八九十百零〇两\d]+[章节]|[一二三四五六七八九十百零〇两]+、|\(?\d+(?:\.\d+)*[).、:]?(?=\s|[^\d]))[、:.\s]*"
+        title = re.sub(numbering, "", text)
+        pattern = ((rules or {}).get("heading_patterns") or {}).get(str(level))
+        match = re.match(pattern, text) if pattern else None
+        if title == text and match:
+            title = text[match.end(1):].lstrip("章节.、:) -\t")
+        return compact(title)
+
     source_lists = {"编制依据", "编制依据及引用文件", "引用文件", "引用文件清单",
                     "适用规范", "适用规范清单", "采用规范与标准", "参考文献"}
-    blocks = _docx_blocks(document)
+    blocks = _docx_blocks(document, text_only=True)
     first_chapter = next((i for i, b in enumerate(blocks)
                           if b["outline"] == 1 and classify_heading(b["text"], rules)[0] == 1), None)
     if first_chapter is None:
@@ -2475,15 +2490,14 @@ def body_citation_review(document, review, rules=None):
         if level in (1, 2, 3):
             if excluded_level is not None and level <= excluded_level:
                 excluded_level = None
-            title = re.sub(r"^(?:第[一二三四五六七八九十百零〇两\d]+[章节]|[一二三四五六七八九十百零〇两\d]+、)[、：:.\s]*", "", text)
-            if excluded_level is None and compact(title) in source_lists:
+            if excluded_level is None and heading_title(text, level) in source_lists:
                 excluded_level = level
             continue
         if excluded_level is not None:
             continue
         if block["table_index"] is not None:
             if not block["photo_frame"]:
-                paragraphs.extend(compact(cell) for row in block["table_content"] for cell in row if cell)
+                paragraphs.extend(compact(p) for p in block["table_paragraphs"] if p)
         elif text and not _is_layout_object(block):
             paragraphs.append(compact(text))
 

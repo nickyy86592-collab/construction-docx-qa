@@ -772,9 +772,11 @@ def body_citation_target(body_pages):
     return max(15, (body_pages + 3) // 4) if type(body_pages) is int and body_pages > 0 else 15
 
 
-def cmd_content_review(document, review_path):
+def cmd_content_review(document, review_path, rules_path=None):
     errors, review = validate_content_review(document, review_path)
-    count, citation_errors = load_format_audit().body_citation_review(document, review.get('body_citations'))
+    common = load_format_audit()
+    count, citation_errors = common.body_citation_review(
+        document, review.get('body_citations'), common.read_rules(rules_path))
     print(f'BODY_CITATIONS={count}')
     errors.extend(citation_errors)
     return emit_gate(errors,'CONTENT_REVIEW_ALLOWED')
@@ -1676,6 +1678,7 @@ def main():
     s=sub.add_parser("content-review")
     s.add_argument("--document", type=Path, required=True)
     s.add_argument("--review", type=Path, required=True)
+    s.add_argument("--rules", type=Path, help="本稿格式配置，用于识别招标另定的标题编号")
     s=sub.add_parser("delivery")
     s.add_argument("--document",type=Path,required=True)
     s.add_argument("--mode",choices=("full","local-review"),default="full")
@@ -1723,7 +1726,7 @@ def main():
         if a.command == "final-ready":
             return cmd_final_ready(a.state,a.document)
         if a.command == "content-review":
-            return cmd_content_review(a.document,a.review)
+            return cmd_content_review(a.document,a.review,a.rules)
         if a.command == "delivery":
             return cmd_delivery(a)
         if a.command == "status":

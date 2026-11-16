@@ -15,6 +15,25 @@ def write(p,obj):p.write_text(json.dumps(obj,ensure_ascii=False),encoding='utf-8
 
 def portable(base):
  from docx import Document
+ citations_doc = Document()
+ citations_doc.add_heading('2 施工部署', 1)
+ citations_doc.add_heading('2.1 编制依据', 2)
+ reference_list = '依据《图纸说明》图A01，列入采用文件。'
+ citations_doc.add_paragraph(reference_list)
+ citations_doc.add_heading('2.2 施工安排', 2)
+ cell = citations_doc.add_table(1, 1).cell(0, 0)
+ cell.paragraphs[0].text = '先腾空东侧通道。'
+ cell.add_paragraph('依据《图纸说明》图A01。')
+ active = '依据《图纸说明》图A01，西侧设置临时围挡。'
+ cell.add_paragraph(active)
+ citation_path = base / 'inline-citations.docx'
+ citations_doc.save(citation_path)
+ items = [{'subject': '围挡及保通', 'source_name': '图纸说明', 'locator': '图A01',
+           'source_ref': '图A01', 'body_quote': quote}
+          for quote in (reference_list, '先腾空东侧通道。依据《图纸说明》图A01。', active)]
+ count, citation_errors = c.body_citation_review(citation_path, {
+     'reviewed': True, 'conclusion': 'synthetic citation eligibility', 'items': items})
+ check('Numbered reference list and split table paragraphs excluded', count == 1 and len(citation_errors) == 2)
  for text in ('差异尚未闭合','本章需进一步完善','建议补充相关措施','本节应补充工艺描述','待办：补写安全章节','本稿已通过审核','审核状态：待确认'):
   check('internal FAIL '+text,statuses(text)[0]=='FAIL')
  for text in ('疑似符号需核对','建议补充接地措施','监理提出建议补充相关措施，项目部整改后复验。','不得将“本章需进一步完善”写入施工记录。','参数尚待核实'):
