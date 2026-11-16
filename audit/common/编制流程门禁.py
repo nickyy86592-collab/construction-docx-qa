@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib.util
 import json
 import math
 import sys
@@ -27,7 +28,8 @@ from source_coverage import coverage_errors, response_errors, final_response_err
 
 STATE_DEFAULT = "篇幅规划状态.json"
 DELIVERY_RESULT_DEFAULT = "流程交付结果.json"
-DELIVERY_RESULT_VERSION = 2
+DELIVERY_RESULT_VERSION = 3
+BODY_CITATION_COUNT_CHECK = "正文依据引用数量"
 STAGES = (40, 75)
 PAGE_DIR = None
 
@@ -757,8 +759,24 @@ def validate_content_review(document, review_path):
     return errors, r
 
 
+def load_format_audit():
+    path = Path(__file__).with_name('Word正式交付硬审（不含页数）.py')
+    spec = importlib.util.spec_from_file_location('_delivery_embedded', path)
+    common = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = common
+    spec.loader.exec_module(common)
+    return common
+
+
+def body_citation_target(body_pages):
+    return max(15, (body_pages + 3) // 4) if type(body_pages) is int and body_pages > 0 else 15
+
+
 def cmd_content_review(document, review_path):
-    errors,_ = validate_content_review(document,review_path)
+    errors, review = validate_content_review(document, review_path)
+    count, citation_errors = load_format_audit().body_citation_review(document, review.get('body_citations'))
+    print(f'BODY_CITATIONS={count}')
+    errors.extend(citation_errors)
     return emit_gate(errors,'CONTENT_REVIEW_ALLOWED')
 
 
@@ -799,7 +817,7 @@ def word_pagination_evidence_errors(word, body_start, common, project_page_count
     return []
 
 
-def delivery_result(a, errors, stage=None):
+def delivery_result(a, errors, stage=None, citation_summary=None):
     """Save truthful task status and propagate failure; never downgrade to success."""
     errors = list(dict.fromkeys(errors))
     formal = not errors and stage == 'final' and a.mode == 'full'
@@ -815,6 +833,8 @@ def delivery_result(a, errors, stage=None):
               'draft_delivery_allowed': not errors and stage == 'draft',
               'status': 'FAIL' if errors else ('PASS' if formal else ('LOCAL_REVIEW_ALLOWED' if a.mode == 'local-review' else 'DRAFT_READY')),
               'failures': errors, 'reports': reports}
+    if citation_summary is not None:
+        result['body_citations'] = citation_summary
     if a.state.is_file():
         try:
             bound_state = load_state(a.state)
@@ -897,18 +917,16 @@ def cmd_delivery(a):
     if actual_rules_digest!=word.get('rules_sha256'):
         errors.append('Word报告格式规则指纹错误')
     # Re-run embedded checks so an empty or edited static report cannot bypass pictures.
-    import importlib.util
-    common_path=Path(__file__).with_name('Word正式交付硬审（不含页数）.py')
-    spec=importlib.util.spec_from_file_location('_delivery_embedded',common_path)
-    common=importlib.util.module_from_spec(spec)
-    sys.modules[spec.name]=common
-    spec.loader.exec_module(common)
+    common = load_format_audit()
     if any(r.get('audit_version') != common.AUDIT_VERSION for r in (static, word)):
         errors.append(f'静态与 Word 格式报告须使用当前硬审版本 {common.AUDIT_VERSION}')
     alignment_checks = [check for check in word.get('checks', [])
                         if check.get('name') == common.WORD_HEADING_ALIGNMENT_CHECK]
     if len(alignment_checks) != 1 or alignment_checks[0].get('status') != 'PASS':
         errors.append('缺少本稿正文标题对齐的 Word 实测通过记录')
+    font_checks = [check for check in word.get('checks', []) if check.get('name') == common.FONT_CHECK]
+    if len(font_checks) != 1 or font_checks[0].get('status') != 'PASS':
+        errors.append('缺少本稿项目执行字体字号的 Word 核验通过记录')
     errors.extend(common.section_heading_review_errors(a.document, review.get('section_heading_review')))
     project_page_count = (reports.get('page', {}).get('actual') or {}).get('word_total_pages')
     errors.extend(word_pagination_evidence_errors(word, rules.get('body_start_page'), common, project_page_count))
@@ -930,6 +948,20 @@ def cmd_delivery(a):
         expected={x['name'] for x in state['startup'].get('real_photo_slots',[])}
         if not expected.issubset({x.get('name') for x in slots}):
             errors.append('启动约定的照片主题被省略')
+    count, citation_errors = common.body_citation_review(a.document, review.get('body_citations'), rules)
+    errors.extend(citation_errors)
+    citation_summary = {'count': count}
+    if a.mode == 'full' and stage == 'final':
+        last_pages = [check.get('details') or {} for check in word.get('checks', [])
+                      if check.get('name') == '末页留白']
+        body_pages = last_pages[0].get('body_page') if len(last_pages) == 1 else None
+        target = body_citation_target(body_pages)
+        shortfall = max(0, target - count)
+        citation_summary.update(minimum=target, shortfall=shortfall,
+                                status='WARN' if shortfall else 'PASS')
+        if shortfall:
+            print(f'WARN: {BODY_CITATION_COUNT_CHECK} {count}条，目标{target}条，差{shortfall}条。')
+            reports['content'] = {'checks': [{'name': BODY_CITATION_COUNT_CHECK, 'status': 'WARN'}]}
     # Every WARN/SKIP in the actual reports must have a version-specific disposition.
     warning_review=json.loads(a.warning_review.read_text(encoding='utf-8')) if a.warning_review else {}
     if warning_review.get('document_sha256')!=digest:
@@ -945,7 +977,7 @@ def cmd_delivery(a):
             m=[x for x in dispositions if x.get('report')==name and x.get('check')==check.get('name')]
             if len(m)!=1 or m[0].get('status') not in ('reviewed','not_applicable') or not m[0].get('evidence') or not m[0].get('conclusion'):
                 errors.append('未处理审核提示：'+name+'/'+str(check.get('name')))
-    return delivery_result(a, errors, stage)
+    return delivery_result(a, errors, stage, citation_summary)
 
 
 def cmd_page_rule():
@@ -1582,6 +1614,7 @@ def cmd_template(a):
                     'source_checks': [{'item': x, 'status': 'pending', 'conclusion': '', 'evidence': []} for x in REVIEW_ITEMS],
                     'latest_confirmation': {'confirmed_at': '', 'reply_source': '', 'conclusion': ''},
                     'parameters': [], 'conflicts': [], 'section_heading_review': [],
+                    'body_citations': {'reviewed': False, 'conclusion': '', 'items': []},
                     'construction_language_review': {'all_paragraphs_reviewed': False, 'conclusion': ''},
                     'visual_review': {'three_color_figures_reviewed': False, 'caption_photo_reviewed': False, 'conclusion': ''},
                     'source_response_review': {'version': 1, 'state': {'path': str(a.state.resolve()), 'basis_sha256': state_basis(state)},

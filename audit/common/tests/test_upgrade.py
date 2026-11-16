@@ -172,11 +172,42 @@ def natural_body_flow_word_cases(word, base):
    doc.Close(False)
 
 
+def word_font_size_case(word, base):
+ from docx import Document
+ from docx.shared import Pt
+
+ path = base / 'prompt-font-scope.docx'
+ for actual_body_size in (12, 14):
+  draft = Document()
+  draft.add_heading('第一章 施工部署', 1).runs[0].font.size = Pt(16)
+  draft.add_paragraph('项目正文对照字号。').runs[0].font.size = Pt(actual_body_size)
+  draft.add_paragraph('表1 施工计划', style='Caption').runs[0].font.size = Pt(10)
+  cell = draft.add_table(1, 1).cell(0, 0)
+  cell.paragraphs[0].add_run('独立表格字号').font.size = Pt(9)
+  draft.save(path)
+  doc = word.Documents.Open(str(path), ReadOnly=True, AddToRecentFiles=False)
+  try:
+   doc.Repaginate()
+   settings = c.effective_font_settings({
+       'font_rules': {'body': {'size_pt': 14}, 'heading1': {'size_pt': '三号'}},
+       'prompt_font_sizes': {'body': '小四'},
+   })
+   result = c.check_fonts(doc, c.get_paragraph_records(doc), settings | {'body_start_page': 1})
+   check(f'Native prompt body size {actual_body_size} compared with effective 12pt',
+         result.status == ('PASS' if actual_body_size == 12 else 'FAIL'))
+   if actual_body_size == 12:
+    check('Native font scope checks body and heading, excludes table and caption',
+          result.details.get('checked_paragraphs') == 2)
+  finally:
+   doc.Close(False)
+
+
 def word_suite(base):
  if sys.platform!='win32':raise RuntimeError('--word requires Windows; no emulation or estimated PASS')
  import win32com.client
  word=win32com.client.DispatchEx('Word.Application');word.Visible=False;word.DisplayAlerts=0
  try:
+  word_font_size_case(word, base)
   last_page_word_cases(word)
   natural_body_flow_word_cases(word,base)
   for kind in ('default','multi','none'):

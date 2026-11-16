@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import sys
@@ -46,6 +47,17 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+
+# The batch workflow ships audit/common with this script. Use the same font
+# resolution and Word checks as the regular workflow.
+common_dir = Path(__file__).resolve().parents[1] / "common"
+sys.path.insert(0, str(common_dir))
+spec = importlib.util.spec_from_file_location(
+    "_batch_common_word_audit", common_dir / "Word正式交付硬审（不含页数）.py")
+common_audit = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = common_audit
+spec.loader.exec_module(common_audit)
 
 
 # -----------------------------
@@ -141,6 +153,10 @@ def load_rules(path: Optional[Path], page_dir=None) -> Dict[str, Any]:
         if not isinstance(incoming, dict):
             raise AuditError("规则文件顶层必须是 JSON 对象。")
         rules.update(incoming)
+    try:
+        rules.update(common_audit.effective_font_settings(rules))
+    except common_audit.AuditError as exc:
+        raise AuditError(str(exc)) from exc
     # Location only: page target remains exclusively in the project page script.
     import ast
     here=Path(page_dir or Path(__file__).resolve().parent)
@@ -461,7 +477,7 @@ def check_project_parameter_completeness(rules: Dict[str, Any]) -> CheckResult:
         "required_level1_titles": "招标文件一级章节要求",
         "required_figures": "招标文件/评分要求中的必要图件",
         "required_real_photo_slots": "实景图素材/占位需求",
-        "font_rules": "招标文件字体字号要求",
+        "font_rules": "项目执行字体字号规则",
     }
     missing = [label for key, label in required_keys.items() if rules.get(key) is None]
     if missing:
@@ -1374,72 +1390,9 @@ def check_figure_caption_numbering(records: List[Dict[str, Any]], body_start: in
     return CheckResult("图号连续性", "FAIL" if faults else "PASS", "图号存在跳号、重号或未定数字。" if faults else f"识别到{len(captions)}条图题且编号连续。", faults or {"count": len(captions)})
 
 
-def font_value_equal(actual: Any, expected: Any, numeric: bool = False) -> bool:
-    if expected is None:
-        return True
-    if actual is None:
-        return False
-    if numeric:
-        try:
-            return abs(float(actual) - float(expected)) < 0.15
-        except Exception:
-            return False
-    return str(actual).strip().lower() == str(expected).strip().lower()
-
-
-def inspect_range_font(rng) -> Dict[str, Any]:
-    try:
-        if int(rng.End) > int(rng.Start) and clean_text(rng.Text):
-            rr = rng.Duplicate
-            if int(rr.End) > int(rr.Start):
-                rr.End = max(int(rr.Start), int(rr.End) - 1)  # 去掉段落标记
-        else:
-            rr = rng
-        font = rr.Font
-        return {
-            "name_east_asia": None if font.NameFarEast in (None, 9999999) else str(font.NameFarEast),
-            "name": None if font.Name in (None, 9999999) else str(font.Name),
-            "size_pt": None if font.Size in (None, 9999999) else float(font.Size),
-            "bold": None if font.Bold in (None, 9999999) else bool(font.Bold),
-        }
-    except Exception:
-        return {"name_east_asia": None, "name": None, "size_pt": None, "bold": None}
-
-
 def check_fonts(doc, records: List[Dict[str, Any]], rules: Dict[str, Any]) -> CheckResult:
-    raw = rules.get("font_rules")
-    if raw is None:
-        return CheckResult("招标文件字体规则", "FAIL", "尚未取得招标文件字体/字号要求，无法完成硬审。")
-    fr = raw or {}
-    if not fr:
-        return CheckResult("招标文件字体规则", "PASS", "已确认招标文件没有额外字体/字号硬性规定。")
-
-    errors: List[Dict[str, Any]] = []
-    checked = 0
-    # 重新按 Word Paragraph 索引取 Range，确保能读取有效 Font
-    for rec in records:
-        if rec["page"] < int(rules["body_start_page"]):
-            continue
-        level, _ = classify_heading(rec["text"])
-        key = f"heading{level}" if level else "body"
-        expected = fr.get(key)
-        if not expected:
-            continue
-        checked += 1
-        p = doc.Paragraphs(rec["index"])
-        actual = inspect_range_font(p.Range)
-        mismatch = {}
-        for k in ("name_east_asia", "name", "size_pt", "bold"):
-            if k in expected and expected[k] is not None:
-                ok = font_value_equal(actual.get(k), expected[k], numeric=(k == "size_pt"))
-                if not ok:
-                    mismatch[k] = {"expected": expected[k], "actual": actual.get(k)}
-        if mismatch:
-            errors.append({"text": rec["text"][:80], "page": rec["page"], "type": key, "mismatch": mismatch})
-
-    if checked == 0:
-        return CheckResult("招标文件字体规则", "FAIL", "已提供字体规则，但没有匹配到任何可检查段落，无法证明字体要求已被执行，禁止正式交付。")
-    return CheckResult("招标文件字体规则", "FAIL" if errors else "PASS", "发现字体/字号与招标文件参数不一致。" if errors else f"已按配置检查 {checked} 个段落，字体规则通过。", errors or {"checked_paragraphs": checked})
+    checked = common_audit.check_fonts(doc, records, rules)
+    return CheckResult(checked.name, checked.status, checked.message, checked.details)
 
 
 def summarize(results: Iterable[CheckResult]) -> Tuple[int, int, int, int]:

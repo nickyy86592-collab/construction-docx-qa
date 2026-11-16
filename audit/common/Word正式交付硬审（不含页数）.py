@@ -43,6 +43,7 @@ import json
 import math
 import re
 import sys
+import unicodedata
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
@@ -56,6 +57,7 @@ from visual_policy import color_profile, planned_figure_names, visual_policy_err
 # -----------------------------
 WD_STATISTIC_PAGES = 2
 WD_ACTIVE_END_PAGE_NUMBER = 3
+WD_WITHIN_TABLE = 12
 WD_VERTICAL_POSITION_RELATIVE_TO_PAGE = 6
 WD_GOTO_PAGE = 1
 WD_GOTO_ABSOLUTE = 1
@@ -63,11 +65,19 @@ WD_OUTLINE_BODY_TEXT = 10
 WD_MAIN_TEXT_STORY = 1
 WD_TEXT_RECTANGLE = 0
 WD_SHAPE_RECTANGLE = 1
-AUDIT_VERSION = "1.14.0"
+AUDIT_VERSION = "1.15.0"
 HEADING_ALIGNMENT_DEFAULT = {'1': 'center', '2': 'center', '3': 'left'}
 WORD_HEADING_ALIGNMENT_CHECK = "正文标题对齐_Word"
 BODY_CHART_COUNT_CHECK = "正文图表数量"
 MIN_BODY_CHARTS = 15
+FONT_CHECK = "项目执行字体字号"
+FONT_SCOPES = {"body", "heading1", "heading2", "heading3", "table", "caption"}
+FONT_FIELDS = {"name_east_asia", "name", "size_pt", "bold"}
+CHINESE_FONT_SIZES = {
+    "初": 42, "小初": 36, "一": 26, "小一": 24, "二": 22, "小二": 18,
+    "三": 16, "小三": 15, "四": 14, "小四": 12, "五": 10.5, "小五": 9,
+    "六": 7.5, "小六": 6.5, "七": 5.5, "八": 5,
+}
 LAST_PAGE_BLANK_LIMIT = 0.20
 PRE_FINAL_PAGE_REVIEW_COUNT = 4
 PRE_FINAL_PAGE_BLANK_REVIEW_RATIO = 0.20
@@ -151,15 +161,66 @@ def normalize_toc_title(text: str) -> str:
     return t.strip()
 
 
+def read_rules(path: Optional[Path]) -> Dict[str, Any]:
+    if path is None:
+        return {}
+    incoming = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(incoming, dict):
+        raise AuditError("规则文件顶层必须是 JSON 对象。")
+    return incoming
+
+
+def font_size_points(value):
+    if isinstance(value, str):
+        label = unicodedata.normalize("NFKC", value).strip()
+        label = label.removesuffix("字").removesuffix("号")
+        value = CHINESE_FONT_SIZES.get(label, label)
+    try:
+        points = float(value) if type(value) in (str, int, float) else 0
+    except ValueError:
+        points = 0
+    if not math.isfinite(points) or points <= 0:
+        raise AuditError(f"字号须为正磅值或中文字号，如小四：{value!r}")
+    return int(points) if points.is_integer() else points
+
+
+def effective_font_settings(rules):
+    """Resolve the task prompt's explicit size first, with per-scope fallback."""
+    baseline = rules.get("font_rules")
+    prompt = rules.get("prompt_font_sizes", {})
+    if not isinstance(prompt, dict) or set(prompt) - FONT_SCOPES:
+        raise AuditError("prompt_font_sizes须按正文、标题、表格或题注的适用部位填写明确字号")
+    scope = rules.get("font_body_scope", "text" if "body" in prompt else "all")
+    if scope not in ("text", "all"):
+        raise AuditError("font_body_scope须为text（普通正文）或all")
+    if baseline is None and not prompt:
+        return {"font_rules": None, "font_body_scope": scope}
+    if baseline is not None and (not isinstance(baseline, dict) or set(baseline) - FONT_SCOPES):
+        raise AuditError("font_rules须按正文、标题、表格或题注配置")
+    resolved = {}
+    for role, properties in (baseline or {}).items():
+        if not isinstance(properties, dict) or set(properties) - FONT_FIELDS:
+            raise AuditError(f"未知字体字段：{role}")
+        resolved[role] = {field: value for field, value in properties.items() if value is not None}
+    for role, size in prompt.items():
+        resolved.setdefault(role, {})["size_pt"] = size
+    for role, properties in resolved.items():
+        if "size_pt" in properties:
+            properties["size_pt"] = font_size_points(properties["size_pt"])
+        if not properties:
+            raise AuditError(f"字体字号规则未指定有效字段：{role}")
+        if any(not isinstance(properties[field], str) or not properties[field].strip()
+               for field in ("name_east_asia", "name") if field in properties):
+            raise AuditError(f"字体名称须为非空文字：{role}")
+        if "bold" in properties and type(properties["bold"]) is not bool:
+            raise AuditError(f"加粗设置须为布尔值：{role}")
+    return {"font_rules": resolved, "font_body_scope": scope}
+
+
 def load_rules(path: Optional[Path], page_dir=None) -> Dict[str, Any]:
-    rules = json.loads(json.dumps(DEFAULT_RULES, ensure_ascii=False))
-    incoming = {}
-    if path:
-        with path.open("r", encoding="utf-8") as f:
-            incoming = json.load(f)
-        if not isinstance(incoming, dict):
-            raise AuditError("规则文件顶层必须是 JSON 对象。")
-        rules.update(incoming)
+    incoming = read_rules(path)
+    rules = {**json.loads(json.dumps(DEFAULT_RULES, ensure_ascii=False)), **incoming}
+    rules.update(effective_font_settings(rules))
     # Location only: page target remains exclusively in the project page script.
     import ast
     here=Path(page_dir or Path(__file__).resolve().parent)
@@ -848,7 +909,7 @@ def check_project_parameter_completeness(rules: Dict[str, Any]) -> CheckResult:
         "required_figures": "招标文件/评分要求中的必要图件",
         "required_real_photo_slots": "实景图素材/占位需求",
         "visual_policy": "项目照片判断、增补功能图及配色决策",
-        "font_rules": "招标文件字体字号要求",
+        "font_rules": "项目执行字体字号规则",
     }
     missing = [label for key, label in required_keys.items() if rules.get(key) is None]
     if missing:
@@ -1941,25 +2002,38 @@ def inspect_range_font(rng) -> Dict[str, Any]:
 def check_fonts(doc, records: List[Dict[str, Any]], rules: Dict[str, Any]) -> CheckResult:
     raw = rules.get("font_rules")
     if raw is None:
-        return CheckResult("招标文件字体规则", "FAIL", "尚未取得招标文件字体/字号要求，无法完成硬审。")
+        return CheckResult(FONT_CHECK, "FAIL", "尚未确认项目执行的字体字号规则。")
     fr = raw or {}
     if not fr:
-        return CheckResult("招标文件字体规则", "PASS", "已确认招标文件没有额外字体/字号硬性规定。")
+        return CheckResult(FONT_CHECK, "PASS", "已确认本项目无具体字体字号规则。")
 
     errors: List[Dict[str, Any]] = []
     checked = 0
+    ordinary_body_only = rules.get("font_body_scope") == "text"
+    separate_table = ordinary_body_only or "table" in fr
+    separate_caption = ordinary_body_only or "caption" in fr
     # 重新按 Word Paragraph 索引取 Range，确保能读取有效 Font
     for rec in records:
         if rec["page"] < int(rules["body_start_page"]):
             continue
-        level, _ = classify_heading(rec["text"], rules)
-        key = f"heading{level}" if level else "body"
+        paragraph = doc.Paragraphs(rec["index"])
+        rng = paragraph.Range
+        if separate_table and rng.Information(WD_WITHIN_TABLE):
+            key = "table" if "table" in fr else (None if ordinary_body_only else "body")
+        else:
+            level, _ = classify_heading(rec["text"], rules)
+            key = f"heading{level}" if level else "body"
+            if not level and separate_caption:
+                style = paragraph.Style
+                caption = (str(getattr(style, "NameLocal", style)).casefold() in ("caption", "题注")
+                           or any(_caption_match(rec["text"], label) for label in ("图", "表")))
+                if caption:
+                    key = "caption" if "caption" in fr else (None if ordinary_body_only else "body")
         expected = fr.get(key)
         if not expected:
             continue
         checked += 1
-        p = doc.Paragraphs(rec["index"])
-        actual = inspect_range_font(p.Range)
+        actual = inspect_range_font(rng)
         mismatch = {}
         for k in ("name_east_asia", "name", "size_pt", "bold"):
             if k in expected and expected[k] is not None:
@@ -1970,8 +2044,10 @@ def check_fonts(doc, records: List[Dict[str, Any]], rules: Dict[str, Any]) -> Ch
             errors.append({"text": rec["text"][:80], "page": rec["page"], "type": key, "mismatch": mismatch})
 
     if checked == 0:
-        return CheckResult("招标文件字体规则", "FAIL", "已提供字体规则，但没有匹配到任何可检查段落，无法证明字体要求已被执行，禁止正式交付。")
-    return CheckResult("招标文件字体规则", "FAIL" if errors else "PASS", "发现字体/字号与招标文件参数不一致。" if errors else f"已按配置检查 {checked} 个段落，字体规则通过。", errors or {"checked_paragraphs": checked})
+        return CheckResult(FONT_CHECK, "FAIL", "已配置字体字号规则，但未匹配到适用的段落。")
+    return CheckResult(FONT_CHECK, "FAIL" if errors else "PASS",
+                       "实际字体字号与项目执行值不一致。" if errors else f"已按项目执行值核对 {checked} 个段落。",
+                       errors or {"checked_paragraphs": checked})
 
 
 def summarize(results: Iterable[CheckResult]) -> Tuple[int, int, int, int]:
@@ -2374,6 +2450,61 @@ def section_heading_review_errors(document, review):
     return errors
 
 
+def body_citation_review(document, review, rules=None):
+    """Verify registered source names and locators in their actual body paragraphs."""
+    if (not isinstance(review, dict) or review.get("reviewed") is not True
+            or not isinstance(review.get("conclusion"), str) or not review["conclusion"].strip()
+            or not isinstance(review.get("items"), list)):
+        return 0, ["未完成正文重要内容的就地引用复核 body_citations"]
+
+    def compact(value):
+        return re.sub(r"\s+", "", unicodedata.normalize("NFKC", value))
+
+    source_lists = {"编制依据", "编制依据及引用文件", "引用文件", "引用文件清单",
+                    "适用规范", "适用规范清单", "采用规范与标准", "参考文献"}
+    blocks = _docx_blocks(document)
+    first_chapter = next((i for i, b in enumerate(blocks)
+                          if b["outline"] == 1 and classify_heading(b["text"], rules)[0] == 1), None)
+    if first_chapter is None:
+        first_chapter = next((i for i, b in enumerate(blocks) if b["outline"] == 1), len(blocks))
+    paragraphs = []
+    excluded_level = None
+    for block in blocks[first_chapter:]:
+        level = block["outline"]
+        text = block["text"]
+        if level in (1, 2, 3):
+            if excluded_level is not None and level <= excluded_level:
+                excluded_level = None
+            title = re.sub(r"^(?:第[一二三四五六七八九十百零〇两\d]+[章节]|[一二三四五六七八九十百零〇两\d]+、)[、：:.\s]*", "", text)
+            if excluded_level is None and compact(title) in source_lists:
+                excluded_level = level
+            continue
+        if excluded_level is not None:
+            continue
+        if block["table_index"] is not None:
+            if not block["photo_frame"]:
+                paragraphs.extend(compact(cell) for row in block["table_content"] for cell in row if cell)
+        elif text and not _is_layout_object(block):
+            paragraphs.append(compact(text))
+
+    errors = []
+    counted = set()
+    for index, item in enumerate(review["items"], 1):
+        fields = ("subject", "source_name", "locator", "body_quote", "source_ref")
+        if not isinstance(item, dict) or any(
+                not isinstance(item.get(key), str) or not item[key].strip() for key in fields):
+            errors.append(f"正文引用第{index}条缺具体事项、来源全名、定位、正文引文或原件依据")
+            continue
+        subject, name, locator, quote = (compact(item[key]) for key in fields[:4])
+        claim = quote.replace(name, "", 1).replace(locator, "", 1)
+        claim = re.sub(r"依据|根据|按照|执行|参见|详见|规定|条款|第|条|款|按|见|[\W_\d]", "", claim)
+        if not claim or name not in quote or locator not in quote or not any(quote in paragraph for paragraph in paragraphs):
+            errors.append(f"正文引用第{index}条未在对应正文处同时找到来源名称和定位：{item['subject']}")
+            continue
+        counted.add((subject, name, locator))
+    return len(counted), errors
+
+
 def check_caption_numbering(blocks, rules):
     """Bind body objects to their captions and count distinct figures and data tables."""
     table_kinds = {item['index']: item.get('kind', 'data') for item in table_layout(rules).get('tables', [])}
@@ -2615,19 +2746,31 @@ def static_audit(document, rules_path, report_path,page_dir=None):
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="通用 Word 正式交付硬审脚本（不含页数目标审核）")
-    p.add_argument("document", type=Path, help="待审 Word 文件路径")
+    p.add_argument("document", nargs="?", type=Path, help="待审 Word 文件路径")
     p.add_argument("--page-dir",type=Path,default=None,help="当前唯一项目页数脚本目录，自动派生正文页定位")
     p.add_argument("--static-only", action="store_true", help="静态检测标题层级与对齐、图表编号与数量、彩图、照片框及内部语言")
     p.add_argument("--rules", type=Path, default=None, help="项目规则 JSON（可选）")
+    p.add_argument("--print-font-rules", action="store_true", help="输出用于编排及核验的生效字体字号")
     p.add_argument("--report", type=Path, default=None, help="审查报告 JSON 输出路径（可选）")
     p.add_argument("--evidence-dir", type=Path, default=None, help="彩图留白异常页证据输出目录（可选；默认与报告同目录）")
-    return p.parse_args()
+    args = p.parse_args()
+    if args.print_font_rules and args.rules is None:
+        p.error("--print-font-rules 需要 --rules")
+    if not args.print_font_rules and args.document is None:
+        p.error("需要待审 Word 文件路径")
+    return args
 
 
 def main() -> int:
     args = parse_args()
-    report = args.report or args.document.with_name(args.document.stem + "_audit_report.json")
     try:
+        if args.print_font_rules:
+            settings = effective_font_settings(read_rules(args.rules))
+            if settings["font_rules"] is None:
+                raise AuditError("尚未确认项目执行的字体字号规则")
+            print(json.dumps(settings, ensure_ascii=False, indent=2))
+            return 0
+        report = args.report or args.document.with_name(args.document.stem + "_audit_report.json")
         if args.static_only:
             return static_audit(args.document, args.rules, report,args.page_dir)
         return audit(args.document, args.rules, report, args.evidence_dir,args.page_dir)

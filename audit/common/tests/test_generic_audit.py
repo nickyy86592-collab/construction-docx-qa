@@ -41,6 +41,7 @@ def make_doc(path, gray=False,photo=True,editorial=False,same=False,border=True,
  d.add_heading('第一节 材料进场与工序准备',level=2)
  d.add_heading('一、路面材料报审',level=3)
  d.add_paragraph('路面强度按4.5MPa进行材料报审。')
+ d.add_paragraph('依据《路面设计说明》图A01，先完成进场材料报审。')
  for i,n in enumerate(names):
   im=Image.new('RGB',(600,900),'white');dr=ImageDraw.Draw(im)
   for j,col in enumerate(['#228bcc','#d94235','#38a76c']):dr.rectangle((70,70+j*200,530,220+j*200), fill='gray' if gray else col)
@@ -125,6 +126,10 @@ bad=copy.deepcopy(review);bad['parameters'][0]['body_locations'][0]['quote']='�
 from argparse import Namespace
 
 # Restore valid review after the prior failure case.
+review['body_citations'] = {'reviewed': True, 'conclusion': 'Synthetic scope citation reviewed',
+    'items': [{'subject': '材料报审', 'source_name': '路面设计说明', 'locator': '图A01',
+               'source_ref': 'Synthetic fixture, drawing A01',
+               'body_quote': '依据《路面设计说明》图A01，先完成进场材料报审。'}]}
 rp.write_text(json.dumps(review))
 rr=c.load_rules(None)|rules
 staticpath=OUT/'delivery-static.json';c.static_audit(passdoc,rules_path,staticpath)
@@ -138,7 +143,8 @@ heading_pass={'name':c.WORD_HEADING_ALIGNMENT_CHECK,'status':'PASS',
 chart_check=next(x for x in json.loads(staticpath.read_text())['checks'] if x['name']==c.BODY_CHART_COUNT_CHECK)
 expect('正文图表不足15个出警告且不把照片框计入',chart_check['status']=='WARN'
        and chart_check['details']=={'figures':3,'tables':0,'total':3,'minimum':15,'shortfall':12})
-format_checks=[heading_pass,chart_check]
+font_pass={'name':c.FONT_CHECK,'status':'PASS','details':{'checked_paragraphs':3}}
+format_checks=[heading_pass,font_pass,chart_check]
 word={'audit_version':c.AUDIT_VERSION,'delivery_status':'PASS','document_sha256':f.sha256(passdoc),'layout_engine':'Microsoft Word','rules':rr,'rules_sha256':c.rules_digest(rr),'photo_delivery_stage':'draft','checks':format_checks+[last_page_pass,pre_final_pass]}
 # Synthetic reports test schema only. They are never represented as Word execution.
 wp=OUT/'synthetic-word.json';wp.write_text(json.dumps(word))
@@ -150,6 +156,14 @@ chart_dispositions=[{'report':name,'check':c.BODY_CHART_COUNT_CHECK,'status':'re
 wr=OUT/'warnings.json';wr.write_text(json.dumps({'document_sha256':f.sha256(passdoc),'items':chart_dispositions}))
 a=Namespace(document=passdoc,state=statepath,mode='local-review',review=rp,static_report=staticpath,word_report=wp,page_report=pg,score_report=sc,warning_review=wr)
 expect('交付汇总schema正例允许编制稿',f.cmd_delivery(a)==0)
+review_without_citations = dict(review)
+review_without_citations.pop('body_citations')
+rp.write_text(json.dumps(review_without_citations))
+expect('未复核就地引用的交付被拒绝', f.cmd_delivery(a) == 2)
+rp.write_text(json.dumps(review))
+wp.write_text(json.dumps(word | {'checks': [heading_pass, chart_check, last_page_pass, pre_final_pass]}))
+expect('缺本稿字体字号核验记录被拒绝', f.cmd_delivery(a) == 2)
+wp.write_text(json.dumps(word))
 wp.write_text(json.dumps(word|{'checks':[chart_check,last_page_pass,pre_final_pass]}))
 expect('缺正文标题对齐的Word实测记录被拒绝',f.cmd_delivery(a)==2)
 wp.write_text(json.dumps(word))
