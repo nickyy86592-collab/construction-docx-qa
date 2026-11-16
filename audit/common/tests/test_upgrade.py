@@ -191,32 +191,39 @@ def natural_body_flow_word_cases(word, base):
    doc.Close(False)
 
 
-def word_font_size_case(word, base):
- from docx import Document
- from docx.shared import Pt
-
- path = base / 'prompt-font-scope.docx'
+def word_font_size_case(word):
+ body_text = '项目正文对照字号。'
+ settings = c.effective_font_settings({
+     'font_rules': {'body': {'size_pt': 14}, 'heading1': {'size_pt': '三号'}},
+     'prompt_font_sizes': {'body': '小四'},
+ })
  for actual_body_size in (12, 14):
-  draft = Document()
-  draft.add_heading('第一章 施工部署', 1).runs[0].font.size = Pt(16)
-  draft.add_paragraph('项目正文对照字号。').runs[0].font.size = Pt(actual_body_size)
-  draft.add_paragraph('表1 施工计划', style='Caption').runs[0].font.size = Pt(10)
-  cell = draft.add_table(1, 1).cell(0, 0)
-  cell.paragraphs[0].add_run('独立表格字号').font.size = Pt(9)
-  draft.save(path)
-  doc = word.Documents.Open(str(path), ReadOnly=True, AddToRecentFiles=False)
+  doc = word.Documents.Add()
   try:
+   doc.Content.Text = '\r'.join(('第一章 施工部署', body_text, '表1 施工计划'))
+   end = int(doc.Content.End) - 1
+   doc.Range(end, end).InsertAfter('\r')
+   end = int(doc.Content.End) - 1
+   table = doc.Tables.Add(doc.Range(end, end), 1, 1)
+   table.Cell(1, 1).Range.Text = '独立表格字号'
+   table.Cell(1, 1).Range.Font.Size = 9
+   doc.Paragraphs(1).OutlineLevel = 1
+   doc.Paragraphs(1).Range.Font.Size = 16
+   doc.Paragraphs(2).Range.Font.Size = actual_body_size
+   doc.Paragraphs(3).Range.Font.Size = 10
    doc.Repaginate()
-   settings = c.effective_font_settings({
-       'font_rules': {'body': {'size_pt': 14}, 'heading1': {'size_pt': '三号'}},
-       'prompt_font_sizes': {'body': '小四'},
-   })
    result = c.check_fonts(doc, c.get_paragraph_records(doc), settings | {'body_start_page': 1})
+   print('Native font scope', actual_body_size, result.status, result.details, flush=True)
    check(f'Native prompt body size {actual_body_size} compared with effective 12pt',
          result.status == ('PASS' if actual_body_size == 12 else 'FAIL'))
    if actual_body_size == 12:
     check('Native font scope checks body and heading, excludes table and caption',
           result.details.get('checked_paragraphs') == 2)
+   else:
+    check('Native font scope reports only the body-size mismatch', result.details == [
+        {'text': body_text, 'page': 1, 'type': 'body',
+         'mismatch': {'size_pt': {'expected': 12, 'actual': 14}}},
+    ])
   finally:
    doc.Close(False)
 
@@ -226,7 +233,7 @@ def word_suite(base):
  import win32com.client
  word=win32com.client.DispatchEx('Word.Application');word.Visible=False;word.DisplayAlerts=0
  try:
-  word_font_size_case(word, base)
+  word_font_size_case(word)
   last_page_word_cases(word)
   natural_body_flow_word_cases(word,base)
   for kind in ('default','multi','none'):
