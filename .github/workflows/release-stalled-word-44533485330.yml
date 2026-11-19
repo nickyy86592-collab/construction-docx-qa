@@ -1,0 +1,24 @@
+name: Release stalled Word audit attempt
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/release-stalled-word-44533485330.yml]
+permissions:
+  actions: write
+jobs:
+  cancel-stalled-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      GH_TOKEN: ${{ github.token }}
+      STALLED_RUN_ID: '44533485330'
+      STALLED_COMMIT_SHA: '3f1097e0c3a293a23ca4b6b38a0857856f5e6913'
+    steps:
+      - name: Release the specific superseded run
+        shell: bash
+        run: |
+          attempt=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${STALLED_RUN_ID}")
+          jq -e --arg sha "$STALLED_COMMIT_SHA" '.name == "Word formal delivery audit" and .head_branch == "main" and .head_sha == $sha and .event == "push"' <<< "$attempt" > /dev/null
+          if [[ "$(jq -r .status <<< "$attempt")" == "in_progress" ]]; then
+            gh run cancel "$STALLED_RUN_ID" --repo "$GITHUB_REPOSITORY"
+          fi
