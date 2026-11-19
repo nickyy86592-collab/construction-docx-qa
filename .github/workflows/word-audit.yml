@@ -28,6 +28,14 @@ jobs:
           ready=$(python audit/common/runner_audit.py --mode formal --project-dir input/project --check-ready)
           echo "ready=$ready" >> "$GITHUB_OUTPUT"
           echo "FORMAL_INPUT_READY=$ready"
+      - uses: actions/upload-artifact@v4
+        if: steps.ready.outputs.ready == 'true'
+        with:
+          name: word-audit-input-${{ github.run_id }}
+          path: |
+            audit/common/
+            input/project/
+          if-no-files-found: error
   audit:
     needs: inputs
     if: needs.inputs.outputs.ready == 'true'
@@ -40,8 +48,9 @@ jobs:
       PYTHONUTF8: '1'
       PHOTO_STAGE: ${{ inputs.photo_stage || 'auto' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
+          name: word-audit-input-${{ github.run_id }}
           path: audit-${{ github.run_id }}
       - name: Prepare cached Python and Word COM
         id: runtime
