@@ -1,32 +1,32 @@
 {
   "font_rules": {
     "body": {
-      "name": "SimSun",
+      "name": "宋体",
       "name_east_asia": "宋体",
       "size_pt": 12
     },
     "heading1": {
-      "name": "SimSun",
+      "name": "宋体",
       "name_east_asia": "宋体",
       "size_pt": 16
     },
     "heading2": {
-      "name": "SimSun",
+      "name": "宋体",
       "name_east_asia": "宋体",
       "size_pt": 16
     },
     "heading3": {
-      "name": "SimSun",
+      "name": "宋体",
       "name_east_asia": "宋体",
       "size_pt": 16
     },
     "table": {
-      "name": "SimSun",
+      "name": "宋体",
       "name_east_asia": "宋体",
       "size_pt": 12
     },
     "caption": {
-      "name": "SimSun",
+      "name": "宋体",
       "name_east_asia": "宋体",
       "size_pt": 12
     }
@@ -66,16 +66,16 @@
     ]
   },
   "required_level1_titles": [
-    "工程概况",
-    "主要施工方法",
-    "拟投入的主要物资计划",
-    "拟投入的主要施工机械、设备计划",
-    "劳动力安排计划",
-    "确保工程质量的技术组织措施",
-    "确保安全生产的技术组织措施",
-    "确保工期的技术组织措施",
-    "确保文明施工的技术组织措施",
-    "施工总平面布置图"
+    "第一章 工程概况",
+    "第二章 主要施工方法",
+    "第三章 拟投入的主要物资计划",
+    "第四章 拟投入的主要施工机械、设备计划",
+    "第五章 劳动力安排计划",
+    "第六章 确保工程质量的技术组织措施",
+    "第七章 确保安全生产的技术组织措施",
+    "第八章 确保工期的技术组织措施",
+    "第九章 确保文明施工的技术组织措施",
+    "第十章 施工总平面布置图"
   ],
   "font_rule_sources": {
     "prompt": "字体：宋体。标题：三号。其他为小四。图表文字为小四。",
