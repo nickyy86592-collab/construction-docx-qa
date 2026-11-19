@@ -233,6 +233,24 @@ def word_suite(base):
  import win32com.client
  word=win32com.client.DispatchEx('Word.Application');word.Visible=False;word.DisplayAlerts=0
  try:
+  # Three one-page chapters exercise the newly synced audit through native Word.
+  document = word.Documents.Add()
+  try:
+   titles = ['第一章 施工方法','第二章 工期安排','第三章 质量控制']
+   document.Content.Text = '\r'.join(titles)
+   for i in range(1,4):
+    paragraph = document.Paragraphs(i)
+    paragraph.OutlineLevel = 1
+    paragraph.Format.PageBreakBefore = (i > 1)
+   document.Repaginate()
+   rules = {'body_start_page':1, 'project_response':{'priorities':[
+       {'chapters':[title], 'basis':'native Word fixture'} for title in titles]}}
+   headings, _ = c.extract_heading_structure(c.get_paragraph_records(document), 1, rules)
+   pages = int(document.ComputeStatistics(2))
+   measured = c.measured_priority_shares(document, headings, rules, pages)
+   check('r20 native Word chapter shares', pages == 3 and measured.status == 'PASS')
+  finally:
+   document.Close(False)
   word_font_size_case(word)
   last_page_word_cases(word)
   natural_body_flow_word_cases(word,base)

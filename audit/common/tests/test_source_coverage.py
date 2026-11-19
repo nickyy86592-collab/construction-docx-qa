@@ -85,7 +85,7 @@ class SourceCoverageTests(unittest.TestCase):
         ws = wb.active
         ws.title = '工程量'
         ws.append(['项目名称', '数量', '要求'])
-        ws.append(['标线施工', 879, '基层清理及施工后保护'])
+        ws.append(['标线施工', 879, '基层清理及施工后保护；热熔涂料、玻璃珠、放样、试划、底漆、涂层厚度、逆反射检测'])
         fees = wb.create_sheet('费用及技术要求')
         fees.sheet_state = 'hidden'
         fees.append(['安全文明施工费', '=100*0.03', '投入使用审批及专款检查'])
@@ -342,7 +342,18 @@ class SourceCoverageTests(unittest.TestCase):
                 'evidence':[evidence(self.tender)]}],
             capacity_review={'all_requirements_mapped':True,'scope_supports_volume':True,
                 'no_padding_or_repetition':True,'conclusion':'synthetic capacity review','unresolved_gaps':[]})
-        self.state['phase']='PLANNING'
+        plan = self.state['plan']
+        chapter = plan['modules'][0]
+        chapter['planned_pages'] = 5
+        for n, name in enumerate(('第二章 施工方法', '第三章 质量控制'), 2):
+            plan['chapter_plan'].append({'chapter':name})
+            plan['modules'].append(dict(chapter, id='M'+str(n), chapter=name, planned_pages=3, primary_for=[]))
+        words = '施工措施 现场限制 可操作性 覆土 第三方测绘 提交记录 标线施工 基层清理 施工后保护 安全文明施工费 投入使用审批 专款检查 智慧工地费用 实施责任 热熔涂料 玻璃珠 放样 试划 底漆 涂层厚度 逆反射检测'.split()
+        plan['project_response'] = {
+            'keywords':[{'term':t, 'requirement':next(r['id'] for r in self.req if t in r['scope'])} for t in words],
+            'headings':{'2':words[:15], '3':words},
+            'priorities':[{'chapters':[c['chapter']], 'basis':'synthetic scope'} for c in plan['chapter_plan']]}
+        self.state['phase']='PLANNING' 
         self.state['gate']={'reason':'未完成篇幅规划，禁止开始正式正文'}
         path=write(self.base/'no-page-state.json',self.state)
         self.assertEqual(flow.cmd_preflight(path),0)

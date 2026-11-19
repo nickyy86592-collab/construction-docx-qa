@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-巢湖项目页数硬审脚本
+泾县医院页数硬审脚本
 项目要求：
-- 施工组织设计全篇共50页，不设页数浮动
+- 施工组织设计全篇共51页，不设页数浮动
 - 封面和一级目录共占第1页，按1页前置页扣除
-- 正文从物理总第2页开始，共49页；该页显示正文页码1，后续顺序编号至49
+- 正文从物理总第2页开始，共50页；该页显示正文页码1，后续顺序编号至50
 - 封面和一级目录所在的物理第1页不显示页码；正文页码使用阿拉伯数字
-- 合格范围：正文49–49页；Word总页数50–50页
+- 合格范围：正文50–50页；Word总页数51–51页
 - 页数以Windows Microsoft Word实际打开并重新分页后的结果为准
 - 本脚本核验Word实排总页数及扣除前置页后的正文页数，不修改被审文档
 - 封面、一级目录实际位置、正文起始位置、前置页不显示页码及正文从1编号，由通用Word格式硬审核验
@@ -20,7 +20,7 @@
     pip install pywin32
 
 用法：
-    python "巢湖项目页数硬审.py" "施工组织设计.docx"
+    python "泾县医院页数硬审.py" "施工组织设计.docx"
 
 退出码：
     0 = PASS
@@ -42,7 +42,7 @@ WD_STATISTIC_PAGES = 2
 # -----------------------------
 # 本项目固定页数规则
 # -----------------------------
-EXPECTED_BODY_PAGES = 49
+EXPECTED_BODY_PAGES = 50
 PAGE_TOLERANCE = 0
 FRONT_MATTER_PAGES = 1   # 固定：封面和一级目录共占第1页；正文从第2页开始
 MIN_BODY_PAGES = EXPECTED_BODY_PAGES - PAGE_TOLERANCE
@@ -104,7 +104,7 @@ def audit(document: Path, report_path: Path, stage: int | None = None) -> int:
 
         report = {
             "audit_type": "project_page_count_gate",
-            "project_name": "巢湖项目",
+            "project_name": "泾县医院",
             "page_source": "microsoft_word",
             "document_sha256": hashlib.sha256(document.read_bytes()).hexdigest(),
             "audited_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -145,11 +145,11 @@ def audit(document: Path, report_path: Path, stage: int | None = None) -> int:
             print(f"WORD_STAGE_STATUS=MEASURED\nSTAGE={stage}\nBODY_PAGES={body_pages}\nREPORT={report_path}")
             return 0
 
-        print("\n=== 巢湖项目页数硬审结果 ===")
+        print("\n=== 泾县医院页数硬审结果 ===")
         print(f"Microsoft Word 实际总页数：{total_pages}")
         print(f"排除封面和一级目录页数：{FRONT_MATTER_PAGES}")
         print(f"实际正文页数：{body_pages}")
-        print("页数要求：全篇50页；封面和一级目录共占物理第1页且不显示页码；正文从物理第2页开始，共49页，显示页码1—49（不设浮动）")
+        print("页数要求：全篇51页；封面和一级目录共占物理第1页且不显示页码；正文从物理第2页开始，共50页，显示页码1—50（不设浮动）")
         print("核验分工：本脚本核验实排页数；封面目录位置及页码显示由通用Word格式硬审核验。")
         print(f"正文合格范围：{MIN_BODY_PAGES}–{MAX_BODY_PAGES}页")
         print(f"总页数合格范围：{MIN_TOTAL_PAGES}–{MAX_TOTAL_PAGES}页")
@@ -178,9 +178,9 @@ def audit(document: Path, report_path: Path, stage: int | None = None) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="巢湖项目页数硬审：全篇50页；封面和一级目录共占物理第1页且不显示页码；正文从物理第2页开始共49页，正文页码从1开始（不设浮动）。本脚本核验页数，页码显示由通用Word格式硬审核验。"
+        description="泾县医院页数硬审：全篇51页；封面和一级目录共占物理第1页且不显示页码；正文从物理第2页开始共50页，正文页码从1开始（不设浮动）。本脚本核验页数，页码显示由通用Word格式硬审核验。"
     )
-    parser.add_argument("--stage",type=int,choices=(40,75),help="只测阶段页数，不按最终全篇50页、正文49页判定")
+    parser.add_argument("--stage",type=int,choices=(40,75),help="只测阶段页数，不按最终全篇51页、正文50页判定")
     parser.add_argument("document", type=Path, help="待审 Word 文件路径")
     parser.add_argument(
         "--report",

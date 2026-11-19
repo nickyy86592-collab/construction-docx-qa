@@ -10,7 +10,7 @@ COMMON=Path(__file__).resolve().parents[1]
 import tempfile,shutil
 _temporary=tempfile.TemporaryDirectory()
 ROOT=Path(_temporary.name)/'skill';(ROOT/'scripts').mkdir(parents=True)
-for name in ('Word正式交付硬审（不含页数）.py','编制流程门禁.py','评分响应核验.py','visual_policy.py','source_coverage.py'):
+for name in ('Word正式交付硬审（不含页数）.py','编制流程门禁.py','评分响应核验.py','visual_policy.py','source_coverage.py','project_response.py'):
     shutil.copy2(COMMON/name,ROOT/'scripts'/name)
 active_pages=list((COMMON.parents[1]/'input/project').glob('*页数硬审*.py'))
 assert len(active_pages)==1,'One active project page script is required'
@@ -20,7 +20,10 @@ sys.path.insert(0,str(ROOT/'scripts'))
 def load(name,file):
  spec=importlib.util.spec_from_file_location(name,ROOT/'scripts'/file);m=importlib.util.module_from_spec(spec);sys.modules[name]=m;spec.loader.exec_module(m);return m
 c=load('common','Word正式交付硬审（不含页数）.py');f=load('flow','编制流程门禁.py')
-names=c.FIGURE_NAMES
+names=c.base_names({})
+terms=['拆除', '加固', '支护', '降水', '清表', '开挖', '钻孔', '灌注', '排水', '运输', '吊装', '测量', '保护', '养护', '验收', '试压', '回填', '导流', '围堰', '临电']
+section_title='第一节 '+ '与'.join(terms[:15])
+subsection_title='一、'+ '与'.join(terms)
 TARGET=f.discover_page_script()[1]['EXPECTED_BODY_PAGES']
 TOLERANCE=f.discover_page_script()[1]['PAGE_TOLERANCE']
 FRONT=f.discover_page_script()[1]['FRONT_MATTER_PAGES']
@@ -29,7 +32,7 @@ policy={'version':1,
         'color_figures':{'mode':'color'},
         'additional_figures':{'names':[],'reason':'Isolate the three legacy diagrams',
                               'override':{'source_type':'prompt','source_ref':'synthetic fixture','quote':'Only test the base diagrams'}}}
-rules={'visual_policy':policy,'required_figures':[{'name':n,'keywords':[n],'hard':True,'color_required':True} for n in names],'required_real_photo_slots':[{'name':'现场沟塘'}],'photo_delivery_stage':'draft','font_rules':{},'required_level1_titles':[]}
+rules={'project_response':{'keywords':[{'term': t} for t in terms]},'visual_policy':policy,'required_figures':[{'name':n,'keywords':[n],'hard':True,'color_required':True} for n in names],'required_real_photo_slots':[{'name':'现场沟塘'}],'photo_delivery_stage':'draft','font_rules':{},'required_level1_titles':[]}
 def make_doc(path, gray=False,photo=True,editorial=False,same=False,border=True,frame_text=True):
  d=Document();d.add_paragraph('测试项目施工组织设计');toc=d.add_paragraph('第一章 施工部署\t2')
  for level, alignment in enumerate((WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.CENTER,
@@ -38,8 +41,8 @@ def make_doc(path, gray=False,photo=True,editorial=False,same=False,border=True,
  from docx.enum.text import WD_TAB_ALIGNMENT,WD_TAB_LEADER
  toc.paragraph_format.tab_stops.add_tab_stop(Inches(6),WD_TAB_ALIGNMENT.RIGHT,WD_TAB_LEADER.DOTS)
  d.add_heading('第一章 施工部署',level=1)
- d.add_heading('第一节 材料进场与工序准备',level=2)
- d.add_heading('一、路面材料报审',level=3)
+ d.add_heading(section_title,level=2)
+ d.add_heading(subsection_title,level=3)
  d.add_paragraph('路面强度按4.5MPa进行材料报审。')
  d.add_paragraph('依据《路面设计说明》图A01，先完成进场材料报审。')
  for i,n in enumerate(names):
@@ -106,7 +109,7 @@ expect('静态CLI及文件哈希报告通过',rc.returncode==0 and json.loads((O
 statepath=OUT/'state.json'
 source=OUT/'source.txt';source.write_text('Synthetic test source: general 4.5 MPa, detail 4.0 MPa. Not project evidence.')
 review={'document_sha256':f.sha256(passdoc),'source_checks':[{'item':n,'status':'verified','conclusion':'synthetic','evidence':[{'path':str(source),'sha256':f.sha256(source),'locator':'synthetic lines'}]} for n in f.REVIEW_ITEMS], 'latest_confirmation':{'confirmed_at':'test','reply_source':'test','conclusion':'test'},'parameters':[{'name':'强度','scope':'路面','cross_source_search':'说明和结构图','occurrences':[{'path':str(source),'sha256':f.sha256(source),'locator':'test1','value':4.5,'unit':'MPa','scope':'路面'},{'path':str(source),'sha256':f.sha256(source),'locator':'test2','value':4.0,'unit':'MPa','scope':'入户道路'}],'status':'consistent','decision':'test','body_locations':[{'location':'第一章','quote':'路面强度按4.5MPa进行材料报审。','value':4.5,'unit':'MPa','scope':'路面'}]}], 'conflicts':[], 'construction_language_review':{'all_paragraphs_reviewed':True,'conclusion':'test'},'visual_review':{'three_color_figures_reviewed':True,'caption_photo_reviewed':True,'conclusion':'test'}}
-review['section_heading_review']=[{'chapter':'第一章 施工部署','section':'第一节 材料进场与工序准备',
+review['section_heading_review']=[{'chapter':'第一章 施工部署','section':section_title,
                                    'criterion':'材料报审重点','evidence_quote':'路面强度按4.5MPa进行材料报审。'}]
 review['parameters'][0]['kind']='project_fact'
 base_doc=OUT/'original.docx';shutil.copy2(passdoc,base_doc)
@@ -220,7 +223,7 @@ expect('伪改静态报告仍不能让占位冒充正式照片',f.cmd_delivery(a
 
 source.write_text(source.read_text()+' version changed');expect('来源文件改变使旧内容核验失效',bool(f.validate_content_review(passdoc,rp)[0]))
 # No-page deployment must still block absent startup.
-np=OUT/'no-page';np.mkdir(exist_ok=True);(np/'编制流程门禁.py').write_text((ROOT/'scripts/编制流程门禁.py').read_text());shutil.copy2(ROOT/'scripts/visual_policy.py',np/'visual_policy.py');shutil.copy2(ROOT/'scripts/source_coverage.py',np/'source_coverage.py')
+np=OUT/'no-page';np.mkdir(exist_ok=True);(np/'编制流程门禁.py').write_text((ROOT/'scripts/编制流程门禁.py').read_text());shutil.copy2(ROOT/'scripts/visual_policy.py',np/'visual_policy.py');shutil.copy2(ROOT/'scripts/source_coverage.py',np/'source_coverage.py');shutil.copy2(ROOT/'scripts/project_response.py',np/'project_response.py')
 rc=subprocess.run([sys.executable,str(np/'编制流程门禁.py'),'--state',str(np/'state.json'),'init'],capture_output=True);expect('无页数脚本仍初始化启动门禁',rc.returncode==2 and (np/'state.json').exists())
 rc=subprocess.run([sys.executable,str(np/'编制流程门禁.py'),'--state',str(np/'state.json'),'preflight'],capture_output=True);expect('无页数脚本不能绕过启动质询',rc.returncode==2)
 print(json.dumps({'passed':len(results),'tests':results,'limits':['Synthetic fixtures only; Windows Word not executed.']},ensure_ascii=False,indent=2))
@@ -301,4 +304,3 @@ expect('两幅独立图共用图题被拦截',structural_checks(doc,'shared-figu
 manifest=json.loads((COMMON/'skill_version.json').read_text())
 expect('Generic scripts match exact synced skill bytes',all(hashlib.sha256((COMMON/n).read_bytes()).hexdigest()==h for n,h in manifest['common_files_sha256'].items()))
 print(json.dumps({'total_passed':len(results),'scope':'portable and interface tests; no Windows Word execution'},ensure_ascii=False))
-

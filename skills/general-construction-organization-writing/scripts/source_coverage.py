@@ -85,15 +85,50 @@ def state_basis(state):
                    'module_registry': state.get('module_registry') or {}})
 
 
+def pdf_units(path):
+    """Commit one whole extraction; fallback never duplicates a partial prefix."""
+    import tempfile
+    failures = []
+    for engine in ('pypdf', 'pymupdf'):
+        # CAD-export streams can exceed pypdf's decompression guard. Do not
+        # disable that guard; use an independent reader and retain visual review.
+        with tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024, mode='w+t', encoding='utf-8') as spool:
+            try:
+                if engine == 'pypdf':
+                    from pypdf import PdfReader
+                    reader = PdfReader(str(path))
+                    pages = reader.pages
+                    count = len(pages)
+                    for i, page in enumerate(pages, 1):
+                        spool.write(json.dumps([f'PDF第{i}页', page.extract_text() or '', ['visual']], ensure_ascii=False) + '\n')
+                else:
+                    import pymupdf
+                    with pymupdf.open(path) as reader:
+                        if reader.needs_pass:
+                            raise ValueError('PDF加密且未解锁')
+                        count = len(reader)
+                        for i, page in enumerate(reader, 1):
+                            spool.write(json.dumps([f'PDF第{i}页', page.get_text() or '', ['visual']], ensure_ascii=False) + '\n')
+                if not count:
+                    raise ValueError('PDF无可枚举页面')
+            except Exception as exc:
+                failures.append(f'{engine}: {type(exc).__name__}: {exc}')
+                continue
+            spool.seek(0)
+            if engine == 'pymupdf':
+                print(f'PDF_READER_FALLBACK=pymupdf\nSOURCE={path}\nREASON={failures[0]}', file=sys.stderr)
+            for line in spool:
+                locator, text, flags = json.loads(line)
+                yield locator, text, flags
+            return
+    raise ValueError(f'PDF读取失败：{path}；' + '；'.join(failures))
+
+
 def native_units(path):
     """Yield (locator, text, manual_flags); no keyword-based filtering."""
     suffix = path.suffix.lower()
     if suffix == '.pdf':
-        from pypdf import PdfReader
-        reader = PdfReader(str(path))
-        for i, page in enumerate(reader.pages, 1):
-            # Layout/graphics can carry requirements even on text-rich pages.
-            yield f'PDF第{i}页', page.extract_text() or '', ['visual']
+        yield from pdf_units(path)
     elif suffix in ('.docx', '.docm'):
         with zipfile.ZipFile(path) as z:
             parts = ['word/document.xml'] + sorted(n for n in z.namelist()

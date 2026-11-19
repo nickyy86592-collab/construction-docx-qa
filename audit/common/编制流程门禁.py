@@ -23,12 +23,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import project_response
 from visual_policy import visual_policy_errors, visual_policy_template
 from source_coverage import coverage_errors, response_errors, final_response_errors, state_basis, digest
 
 STATE_DEFAULT = "篇幅规划状态.json"
 DELIVERY_RESULT_DEFAULT = "流程交付结果.json"
-DELIVERY_RESULT_VERSION = 3
+DELIVERY_RESULT_VERSION = 4
 BODY_CITATION_COUNT_CHECK = "正文依据引用数量"
 STAGES = (40, 75)
 PAGE_DIR = None
@@ -136,6 +137,7 @@ def cmd_init(state_path: Path, force: bool):
         "plan": {
             "status": "NOT_READY",
             "revision": 1,
+            "project_response": project_response.template(),
             "requirements": [],
             "modules": [],
             "pilot_plan": {},
@@ -436,6 +438,14 @@ def cmd_checkpoint(
         "note": note,
         "score_report": {"path": str(score_report_path.resolve()), "sha256": sha256(score_report_path)},
     }
+    font_budget = (state["plan"].get("project_response") or {}).get("font_budget")
+    if font_budget:
+        count = (report.get("actual") or {}).get("word_body_characters") if report_meta else None
+        if type(count) is not int or count <= 0 or not str(note or "").strip():
+            return emit_gate(["指定字号项目须使用run-page-audit的阶段Word实测，并以--note说明剩余具体章节的字数校准"], "")
+        cp["font_calibration"] = {"measured_chars": count, "measured_pages": actual,
+            "remaining_planned_chars": font_budget["estimated_chars"] - font_budget.get("front_chars", 0) - count,
+            "remaining_body_pages": target - actual, "chapter_adjustments": note}
     if report_meta:
         cp["word_report"] = report_meta
 
@@ -488,6 +498,8 @@ def cmd_final_ready(state_path: Path, document=None):
             errors.append(f"{stage}%快照缺失或已改变")
         if any(state.get("module_registry",{}).get(mid,{}).get("source_sha256")!=h for mid,h in cp.get("module_source_hashes",{}).items()):
             errors.append(f"{stage}%阶段模块源已改变，须重新测量")
+        if (state.get("plan", {}).get("project_response") or {}).get("font_budget") and not cp.get("font_calibration"):
+            errors.append(f"{stage}%缺少指定字号的剩余章节预算校准")
         wr=cp.get("word_report") or {}
         if not fresh_file({"path":wr.get("report_file"),"sha256":wr.get("report_sha256")},state_path.parent):
             errors.append(f"{stage}% Word测量报告丢失或已改变")
@@ -618,7 +630,6 @@ TECHNICAL_REVIEW_ITEMS = (
     'quantity_capacity_schedule_resources', 'issue_recheck',
 )
 REFERENCE_TARGET_ITEMS = (
-    'length_38000',
     'numbers_6_per_1000', 'charts_15',
 )
 
@@ -643,7 +654,7 @@ def technical_review_errors(record, final=False):
         for key in REFERENCE_TARGET_ITEMS:
             item = refs.get(key)
             if not isinstance(item, dict) or item.get('status') not in ('met', 'adapted', 'not_met') or not isinstance(item.get('conclusion'), str) or not item['conclusion'].strip():
-                errors.append('文字量、数字密度或图表复核缺采用/调整结论：' + key)
+                errors.append('数字密度或图表复核缺采用/调整结论：' + key)
     return errors
 
 
@@ -945,6 +956,16 @@ def cmd_delivery(a):
         errors.append('照片交付阶段未一致确认')
     slots=rules.get('required_real_photo_slots') or []
     if state:
+        response = state['plan'].get('project_response')
+        if not response or rules.get('project_response') != response:
+            errors.append('交付审查规则须直接采用当前准入的project_response')
+        if not any(c.get('name') == '重点章节实际篇幅' and c.get('status') == 'PASS' for c in word.get('checks', [])):
+            errors.append('缺本稿前三项逐项达标的Word版面测量')
+        named = (rules.get('visual_policy') or {}).get('named_exhibits', [])
+        findings = (review.get('visual_review') or {}).get('named_exhibits', {})
+        for exhibit in named:
+            if not project_response.text(findings.get(exhibit['name'])):
+                errors.append('缺指定图表与本项目技术内容的逐项目视核对：'+exhibit['name'])
         if state['startup'].get('visual_policy') != rules.get('visual_policy'):
             errors.append('启动与交付图文决策不一致；按当前有效要求同步更新项目判断及图件计划')
         expected={x['name'] for x in state['startup'].get('real_photo_slots',[])}
@@ -1025,6 +1046,9 @@ def cmd_run_page_audit(document, report_path, stage=None, pilot=False):
                 'measured_at':now_iso(),'project_rule_source':str(script.resolve()),
                 'project_rule':{'target_body_pages':vals['EXPECTED_BODY_PAGES'],'page_tolerance':vals['PAGE_TOLERANCE'],'front_matter_pages_excluded':front},
                 'actual':{'word_total_pages':total,'word_body_pages':total-front,'word_version':str(word.Version)}}
+        import re
+        start = doc.GoTo(What=1, Which=1, Count=front+1).Start
+        report['actual']['word_body_characters'] = len(re.sub(r'\s+', '', str(doc.Range(start, doc.Content.End).Text).replace('\x07', '')))
         if pilot:
             import re
             start=doc.GoTo(What=1,Which=1,Count=front+1).Start
@@ -1063,6 +1087,7 @@ def planning_policy(target):
 def plan_hash(state):
     import hashlib
     plan={k:v for k,v in (state.get('plan') or {}).items() if k!='status'}
+    plan["_planning_rules"] = "r20"
     if state.get('schema_version') == '3.2':
         plan['_source_coverage'] = (state.get('startup') or {}).get('source_coverage')
         plan['_source_scope'] = (state.get('startup') or {}).get('source_scope')
@@ -1213,6 +1238,7 @@ def effective_budget(state,base):
 
 def detailed_plan_errors(state,base,target):
     errors=[];p=state.get('plan') or {};mods=p.get('modules');reqs=p.get('requirements')
+    errors.extend(project_response.plan_errors(state, base, fresh_file))
     if type(p.get('revision')) is not int or p['revision']<1:errors.append('规划须有正整数revision')
     if not isinstance(reqs,list) or not reqs:
         errors.append('缺少评分/范围/强制响应的内容需求清单requirements');reqs=[]

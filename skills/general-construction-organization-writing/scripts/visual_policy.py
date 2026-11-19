@@ -8,10 +8,18 @@ _UNSET = object()
 def visual_policy_template():
     return {
         'version': 1,
+        'named_exhibits': [],
         'real_photos': {'decision': '', 'reason': '', 'replacement_figures': []},
         'color_figures': {'mode': 'color'},
         'additional_figures': {'names': [], 'reason': ''},
     }
+
+
+def base_names(policy):
+    items = policy.get('named_exhibits', []) if isinstance(policy, dict) else []
+    mapping = {item['replaces']: item['name'] for item in items if isinstance(item, dict)
+               and item.get('replaces') in BASE_FIGURES and isinstance(item.get('name'), str)} if isinstance(items, list) else {}
+    return [mapping.get(name, name) for name in BASE_FIGURES]
 
 
 def _names(value):
@@ -49,6 +57,18 @@ def visual_policy_errors(policy, slots, figures=_UNSET):
     errors = []
     if not isinstance(policy, dict) or type(policy.get('version')) is not int or policy.get('version') != 1:
         return ['未记录有效visual_policy：须由AI按项目整体判断照片和功能图安排']
+    exhibits = policy.get('named_exhibits', [])
+    if not isinstance(exhibits, list) or any(not isinstance(x, dict) or x.get('kind') not in ('图','表')
+            or not all(isinstance(x.get(k),str) and x[k].strip() for k in ('name','source_ref','quote'))
+            or x['name'] not in x['quote'] for x in exhibits):
+        return ['招标指定图表须登记原名、图或表、原文与位置']
+    replaced = [x['replaces'] for x in exhibits if x.get('replaces')]
+    if (not _names([x['name'] for x in exhibits]) or not _names(replaced)
+            or any(x.get('replaces') and (x['kind'] != '图' or x['replaces'] not in BASE_FIGURES) for x in exhibits)):
+        return ['指定图表重名或默认图替换关系无效']
+    base = base_names(policy)
+    if len(set(base)) != len(BASE_FIGURES):
+        return ['不同必备图不能共用图名']
     if not isinstance(slots, list) or any(not isinstance(x, dict) for x in slots):
         errors.append('照片主题清单必须为对象数组；不需要照片时明确填[]')
         slots = []
@@ -80,7 +100,7 @@ def visual_policy_errors(policy, slots, figures=_UNSET):
         errors.append('只有schematic决策才登记替代示意图')
     if decision == 'omit' and not _override_valid(photo.get('override')):
         errors.append('同时省略照片与替代示意图须有明确的特殊要求依据')
-    if any(x in BASE_FIGURES for x in replacement):
+    if any(x in base for x in replacement):
         errors.append('替代实景的示意图须针对该主题，不能拿必备三图充数')
     mode = color.get('mode')
     if mode not in ('color', 'monochrome', 'custom'):
@@ -104,7 +124,7 @@ def visual_policy_errors(policy, slots, figures=_UNSET):
         errors.append('须说明增补功能图的项目价值及与正文的关系')
     if not 1 <= len(names) <= 3 and not _override_valid(extra.get('override')):
         errors.append('默认须在必备三图之外增加1至3张功能图；数量例外须有明确依据')
-    if any(x in BASE_FIGURES for x in names):
+    if any(x in base for x in names):
         errors.append('必备三图不能计入增补1至3张功能图')
     if figures is not _UNSET:
         if not isinstance(figures, list) or any(not isinstance(x, dict) for x in figures):
@@ -113,11 +133,11 @@ def visual_policy_errors(policy, slots, figures=_UNSET):
         if not _names(all_names):
             errors.append('图件清单图名须非空且不重复')
         profile = color_profile(policy)
-        for name in dict.fromkeys([*BASE_FIGURES, *names, *replacement]):
+        for name in dict.fromkeys([*base, *names, *replacement]):
             item = next((x for x in figures if x.get('name') == name), None)
             if not item or item.get('hard') is not True or item.get('color_required') is not profile.get('color_required'):
                 errors.append('图件缺失或hard/color_required与有效决策不一致：'+name)
-            if name not in BASE_FIGURES and item and any(not item.get(k) for k in ('purpose', 'location', 'context_anchor')):
+            if name not in base and item and any(not item.get(k) for k in ('purpose', 'location', 'context_anchor')):
                 errors.append('功能图须明确purpose、location及正文衔接原文context_anchor：'+name)
     return errors
 
@@ -130,4 +150,4 @@ def planned_figure_names(policy):
     photo = photo if isinstance(photo, dict) else {}
     extras = extra.get('names') if isinstance(extra.get('names'), list) else []
     replacements = photo.get('replacement_figures') if isinstance(photo.get('replacement_figures'), list) else []
-    return list(dict.fromkeys([*BASE_FIGURES, *(x for x in extras + replacements if isinstance(x, str))]))
+    return list(dict.fromkeys([*base_names(policy), *(x for x in extras + replacements if isinstance(x, str))]))

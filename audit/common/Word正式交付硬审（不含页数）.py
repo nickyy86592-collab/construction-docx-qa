@@ -49,7 +49,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from visual_policy import color_profile, planned_figure_names, visual_policy_errors
+import project_response
+from visual_policy import base_names, color_profile, planned_figure_names, visual_policy_errors
 
 
 # -----------------------------
@@ -65,7 +66,7 @@ WD_OUTLINE_BODY_TEXT = 10
 WD_MAIN_TEXT_STORY = 1
 WD_TEXT_RECTANGLE = 0
 WD_SHAPE_RECTANGLE = 1
-AUDIT_VERSION = "1.15.0"
+AUDIT_VERSION = "1.16.0"
 HEADING_ALIGNMENT_DEFAULT = {'1': 'center', '2': 'center', '3': 'left'}
 WORD_HEADING_ALIGNMENT_CHECK = "正文标题对齐_Word"
 BODY_CHART_COUNT_CHECK = "正文图表数量"
@@ -1864,6 +1865,9 @@ def check_required_figures(doc, rules: Dict[str, Any]) -> List[CheckResult]:
 
     for item in items:
         name = str(item.get("name", "未命名图件"))
+        # 同名章节常先于题注出现在目录。指定图由同次portable_checks直接绑定正文对象。
+        if any(x.get('name') == name and x.get('kind') == '图' for x in (rules.get('visual_policy') or {}).get('named_exhibits', [])):
+            continue
         keywords = item.get("keywords") or [name]
         hard = bool(item.get("hard", False))
         found_kw = None
@@ -2104,6 +2108,8 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         results.extend(portable_checks(docx_path, rules))
         headings, heading_checks = extract_heading_structure(records, int(rules["body_start_page"]), rules)
         results.extend(heading_checks)
+        if rules.get("project_response") is not None:
+            results.append(measured_priority_shares(doc, headings, rules, page_count))
         results.extend(check_front_page_and_body(doc, records, headings, rules, page_count))
         results.extend(check_toc_layout_word(doc, records, headings, rules))
         results.extend(check_table_layout_word(doc, rules))
@@ -2174,7 +2180,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
 
 
 # Portable checks inspect the embedded DOCX bytes, not an external image filename.
-FIGURE_NAMES = ('施工功能分区示意图', '施工进度横道图', '施工进度网络图')
+
 EDITORIAL_RE = re.compile(r'本[章节段](?:应|需|可)(?:写|补充|描述|引用)|(?:后续|此处|这里)(?:补写|扩写|插入正文)|(?:引用|调用|根据)知识库|(?:编制|审核|硬审|页数|门禁)脚本|待完善正文|编制时应|本段可用|本[章节段](?:需|尚需|有待)(?:进一步)?完善|建议补充相关措施|(?:审查|审核|编制)(?:意见|状态)[:：]|(?:本稿|本章|本节|本段)(?:已|尚未|未)(?:通过|完成)(?:审核|审查|复核)|(?:本稿|本章|本节|本段)(?:质量优秀|已达优秀)|待办[:：]|(?:差异|冲突)(?:尚未|未)闭合')
 EDITORIAL_WARN_RE = re.compile(r'疑似符号|得分点|\bskill\b|建议(?:进一步)?补充|(?:正文|本稿|本[章节段])[^。；\n]{0,20}(?:待核实|待完善|待确认|自评|评分)|(?:待补充|待核实|待完善)|(?:资料|参数|差异|冲突)[^。；\n]{0,12}(?:未闭合|尚未关闭)',re.I)
 LANGUAGE_CONTEXT_RE = re.compile(r'监理|审图|图纸会审|审查意见|审核意见|设计单位|整改通知|禁止|不得|严禁|例如|示例|[“「「]|依据[^。；]{0,16}意见')
@@ -2660,6 +2666,38 @@ def _color_metrics(raw):
             'foreground_color_ratio': colored/max(1,foreground), 'hue_groups': len(substantive)}
 
 
+def measured_priority_shares(doc, headings, rules, page_count):
+    """用每章首页的物理页和版心纵坐标，折算同页交界。"""
+    try:
+        front = rules['body_start_page'] - 1
+        total = page_count - front
+        starts = []
+        for h in headings:
+            if h['level'] != 1:
+                continue
+            pos = h['start']
+            r = doc.Range(pos, pos + 1)
+            doc.ActiveWindow.View.Type = 3
+            doc.ActiveWindow.ScrollIntoView(r, True)
+            box, y = _page_body_box(r), _range_vertical_y(doc, pos)
+            page = page_of_range(r)
+            if not box or y is None or page <= front:
+                raise ValueError('无法定位章首版心：'+h['text'])
+            offset = min(1., max(0., (y-box['body_top_pt']) / box['usable_height_pt']))
+            starts.append((h['text'], page-front-1+offset))
+        if not starts:
+            raise ValueError('正文无章标题')
+        starts[0] = (starts[0][0], 0.)
+        pages = {name: end-start for ((name,start),(_,end)) in zip(starts,starts[1:]+[('',total)])}
+        if len(starts) != len(pages) or min(pages.values()) <= 0:
+            raise ValueError('章边界重复或计量次序有误')
+        problems, data = project_response.priority_errors(rules['project_response']['priorities'], pages, total)
+    except (KeyError, ValueError, TypeError, AttributeError) as exc:
+        problems, data = [str(exc)], []
+    return CheckResult('重点章节实际篇幅', 'FAIL' if problems else 'PASS',
+                       '；'.join(problems) or '按Word正文版面逐项达到规划下限。', data)
+
+
 def portable_checks(document, rules):
     blocks = _docx_blocks(document)
     body_start = next((i for i, block in enumerate(blocks)
@@ -2679,12 +2717,32 @@ def portable_checks(document, rules):
     if policy_errors:
         return out + [CheckResult('项目图文决策', 'FAIL', '项目照片/配色/功能图安排尚未满足要求。', policy_errors)]
     out.append(CheckResult('项目图文决策', 'PASS', '已核对项目判断、特殊要求依据及图件计划；专业价值仍须实际审查。'))
+    spec = rules.get('project_response')
+    if spec is None:
+        out.append(CheckResult('标题关键词分层硬审', 'FAIL', '须从编前规划载入project_response'))
+    else:
+        try:
+            actual = {k:[h['text'] for h in headings if h['level']==int(k)] for k in ('2','3')}
+            problems, counts = project_response.title_coverage(spec, actual)
+            prompted = (rules.get('prompt_font_sizes') or {}).get('body')
+            font = spec.get('font_budget')
+            if (prompted is None) != (font is None) or (prompted is not None and font_size_points(prompted) != font.get('size_pt')):
+                problems.append('提示词指定正文字号与编前容量测算不一致')
+        except (TypeError, KeyError, ValueError, AttributeError) as exc:
+            problems, counts = [str(exc)], {}
+        out.append(CheckResult('标题关键词分层硬审', 'FAIL' if problems else 'PASS',
+                               '；'.join(problems) or '已按正文实际标题分层去重计数。', counts))
+    issues = project_response.named_errors(body_blocks, policy.get('named_exhibits', []), _caption_match)
+    out.append(CheckResult('招标指定图表原名与对象', 'FAIL' if issues else 'PASS',
+                           '；'.join(issues) or '按同名章节目、题注及对应对象逐项核对。'))
     used = set()
     profile = color_profile(policy)
     names = list(dict.fromkeys(planned_figure_names(policy) + [x['name'] for x in configured if x.get('hard') is True]))
     for name in names:
         item = next(x for x in configured if x.get('name') == name)
         indices = [i for i,b in enumerate(blocks) if _caption_match(b['text'], '图') and name in b['text']]
+        if any(x['kind'] == '图' and x['name'] == name for x in policy.get('named_exhibits', [])):
+            indices = [i for i in indices if _caption_match(blocks[i]['text'], '图').group(2) == name]
         if len(indices) != 1:
             out.append(CheckResult('嵌入彩图_'+name, 'FAIL', '须有唯一的正式图题和实际嵌入图。', {'captions': len(indices)}))
             continue
@@ -2710,7 +2768,7 @@ def portable_checks(document, rules):
             out.append(CheckResult('图件竖向_'+name, 'PASS' if portrait_ok else 'FAIL', '图件须按竖向画布组织。', metrics))
         except Exception as e:
             out.append(CheckResult('彩图配色_'+name, 'FAIL', '无法检测嵌入图片颜色，不能当作通过：'+str(e)))
-        if name not in FIGURE_NAMES:
+        if name not in base_names(policy):
             anchor = item.get('context_anchor', '')
             neighbours = ''.join(b['text'] for j,b in enumerate(blocks[max(0,index-4):index+5], max(0,index-4))
                                  if j != index and not _caption_match(b['text'], '图'))

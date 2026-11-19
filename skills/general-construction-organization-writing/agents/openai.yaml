@@ -1,9 +1,13 @@
 interface:
-  display_name: "通用施组编制（11月巢湖）"
-  short_description: "通用施组编制：原资料重点提取、评分对应、充分响应、原件反查与Word交付审核"
-  default_prompt: "使用 $general-construction-organization-writing，基于当前项目全部原资料逐项提取重点和评分子条件，规划并充分落实到正文，执行原件反查、既有阶段校准和Word交付审核。"
+  display_name: "通用施组编制（r20-泾县医院）"
+  short_description: "通用施组编制：分步推进、原资料响应、内容复核、阶段校准与Word交付验收"
+  default_prompt: "使用 $general-construction-organization-writing（通用施组编制（r20-泾县医院））按本项目招标文件和报价清单编制或复核施工组织设计。"
   icon_small: "assets/icon.svg"
   icon_large: "assets/icon.svg"
 policy:
   allow_implicit_invocation: true
-  products: ["chatgpt", "codex", "api", "atlas"]
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas

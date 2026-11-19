@@ -12,7 +12,7 @@ if len(sys.argv)>1:ORIGIN=Path(sys.argv[1]);COMMON=ORIGIN/'scripts'
 else:COMMON=Path(__file__).resolve().parents[1]
 TEMPDIR=tempfile.TemporaryDirectory();BASE=Path(TEMPDIR.name)
 ROOT=BASE/'scripts';ROOT.mkdir()
-for name in ('编制流程门禁.py','Word正式交付硬审（不含页数）.py','评分响应核验.py','visual_policy.py','source_coverage.py'):shutil.copy2(COMMON/name,ROOT/name)
+for name in ('编制流程门禁.py','Word正式交付硬审（不含页数）.py','评分响应核验.py','visual_policy.py','source_coverage.py','project_response.py'):shutil.copy2(COMMON/name,ROOT/name)
 PAGE=ROOT/'测试项目页数硬审.py'
 PAGE.write_text('EXPECTED_BODY_PAGES = 395\nPAGE_TOLERANCE = 5\nFRONT_MATTER_PAGES = 1\n')
 sys.path.insert(0,str(ROOT))
@@ -25,12 +25,14 @@ def check(label,expr):
  RESULTS.append(label)
 def write(path,data):path.write_text(json.dumps(data,ensure_ascii=False,indent=2));return path
 def evidence(p,locator='synthetic test only'):return {'path':str(p),'sha256':f.sha256(p),'locator':locator}
-SOURCE=BASE/'tender-fixture.txt';SOURCE.write_text('Synthetic source for structure tests, not actual project evidence.\nfixture scope R01')
+TERMS=['拆除', '加固', '支护', '降水', '清表', '开挖', '钻孔', '灌注', '排水', '运输', '吊装', '测量', '保护', '养护', '验收', '试压', '回填', '导流', '围堰', '临电']
+CATALOG=' '.join(TERMS)
+SOURCE=BASE/'tender-fixture.txt';SOURCE.write_text(CATALOG+'\nfixture scope R01')
 POLICY={'version':1,'real_photos':{'decision':'required','reason':'fixture','replacement_figures':[]},
         'color_figures':{'mode':'color'},
         'additional_figures':{'names':[],'reason':'fixture baseline',
                               'override':{'source_type':'prompt','source_ref':'synthetic','quote':'only base figures'}}}
-FORMAT=BASE/'format.json';write(FORMAT,{'visual_policy':POLICY,'font_rules':{},'required_level1_titles':[], 'required_figures':[{'name':n,'hard':True,'color_required':True} for n in c.FIGURE_NAMES], 'required_real_photo_slots':[{'name':'现场现状'}],'photo_delivery_stage':'draft'})
+FORMAT=BASE/'format.json';write(FORMAT,{'visual_policy':POLICY,'font_rules':{},'required_level1_titles':[], 'required_figures':[{'name':n,'hard':True,'color_required':True} for n in c.base_names(POLICY)], 'required_real_photo_slots':[{'name':'现场现状'}],'photo_delivery_stage':'draft'})
 PNG=BASE/'pilot.png';im=Image.new('RGB',(400,600),'white');dr=ImageDraw.Draw(im)
 for i,col in enumerate(('red','green','blue')):dr.rectangle((30,40+i*160,370,150+i*160),fill=col)
 im.save(PNG)
@@ -44,9 +46,10 @@ def start_case(target=395,tol=5,front=1):
  s['startup']={'visual_policy':POLICY,'sources':[dict(evidence(SOURCE),role='tender')], 'latest_updates':{'status':'confirmed_none','asked_at':'test','reply_text':'synthetic answer','reply_source':'synthetic record'},'critical_questions':[],'questions_review':'fixture review','batch_plan':{'count':1,'reason':'fixture','batches':['whole']},'word_channel':'unavailable','word_capability_evidence':'tests run without Word','real_photo_slots':[{'name':'现场现状','location':'第一章','basis':'fixture'}]}
  reserve=5 if target>=200 else 2
  n=math.ceil((target-reserve)/f.planning_policy(target)['module_page_cap']);per=(target-reserve)/n
+ chapters=['第一章 技术方案','第二章 保障措施','第三章 施工部署']
  mods=[];reqs=[]
  for i in range(n):
-  rid=f'R{i+1:02}';mid=f'M{i+1:02}';chapter='第一章 技术方案' if i<n//2 else '第二章 保障措施'
+  rid=f'R{i+1:02}';mid=f'M{i+1:02}';chapter=chapters[min(i*3//n,2)]
   reqs.append({'id':rid,'scope':'fixture scope '+rid,'scoring':False,'evidence':[evidence(SOURCE)]})
   mods.append({'id':mid,'chapter':chapter,'section':'第一节 '+mid,'scope':'fixture content scope '+mid,'basis':'fixture scoring responsibility','requirement_ids':[rid],'primary_for':[rid], 'evidence':[evidence(SOURCE)],'text_pages':per-1,'table_pages':.5,'figure_pages':.5,'planned_pages':per,'estimated_normal_chars':(per-1)*100})
  count40=max(1,round(n*.4));count75=max(count40+1,min(n-1,round(n*.75)))
@@ -54,17 +57,18 @@ def start_case(target=395,tol=5,front=1):
  ranges={}
  for stage,ids in boundaries.items():
   center=sum(m['planned_pages'] for m in mods if m['id'] in ids);slack=max(1,math.ceil(center*.05));ranges[stage]=[round(max(1,center-slack),2),round(center+slack,2)]
- s['plan'].update(revision=1,planned_total_body_pages=target,chapter_plan=[{'chapter':ch,'basis':'fixture weighting','page_range':[0,target]} for ch in ('第一章 技术方案','第二章 保障措施')],figure_table_pages_estimate=n,reserve_pages=reserve,planning_notes='按真实内容范围、评分责任和版面容量进行预算（fixture）',requirements=reqs,modules=mods,pilot_plan={'module_ids':[mods[0]['id'],mods[-1]['id']],'coverage':['narrative','table','figure'],'basis':'different representative content types'},capacity_review={'all_requirements_mapped':True,'scope_supports_volume':True,'no_padding_or_repetition':True,'conclusion':'fixture only','unresolved_gaps':[]},checkpoint_module_ids=boundaries,checkpoint_completion_basis={'40':'fixture completed responsibility','75':'fixture completed responsibility'},checkpoint_expected_page_ranges=ranges)
+ s['plan'].update(revision=1,planned_total_body_pages=target,chapter_plan=[{'chapter':ch,'basis':'fixture weighting','page_range':[0,target]} for ch in chapters],figure_table_pages_estimate=n,reserve_pages=reserve,planning_notes='按真实内容范围、评分责任和版面容量进行预算（fixture）',requirements=reqs,modules=mods,pilot_plan={'module_ids':[mods[0]['id'],mods[-1]['id']],'coverage':['narrative','table','figure'],'basis':'different representative content types'},capacity_review={'all_requirements_mapped':True,'scope_supports_volume':True,'no_padding_or_repetition':True,'conclusion':'fixture only','unresolved_gaps':[]},checkpoint_module_ids=boundaries,checkpoint_completion_basis={'40':'fixture completed responsibility','75':'fixture completed responsibility'},checkpoint_expected_page_ranges=ranges)
  import source_coverage as trace
  s['startup']['source_scope']={'roots':[str(SOURCE)],'excluded':[],'reviewed':True,'conclusion':'synthetic source inventory'}
  rows,texts=trace.scan(s,BASE)
  sid=s['startup']['sources'][0]['id']; units=rows[0]['units'];first=units[0]['id'];second=units[1]['id']
  for i,r in enumerate(reqs):
-  r.update(source_refs=[{'source_id':sid,'unit_id':second if i==0 else first,'quote':r['scope'] if i==0 else 'Synthetic source for structure tests'}],response_requirements=['synthetic substantive response'],score_refs=[{'item_id':'S1','criterion_index':0}])
+  r.update(source_refs=[{'source_id':sid,'unit_id':second if i==0 else first,'quote':r['scope'] if i==0 else CATALOG}],response_requirements=['synthetic substantive response'],score_refs=[{'item_id':'S1','criterion_index':0}])
   if i==0:r['scoring']=True
  s['startup']['source_coverage'].update(dispositions=[{'unit_ids':[second],'status':'reviewed','disposition':'requirements','requirement_ids':[reqs[0]['id']],'conclusion':'synthetic scoring source'},{'unit_ids':[first],'status':'reviewed','disposition':'requirements','requirement_ids':[r['id'] for r in reqs[1:]],'conclusion':'synthetic scope source'}],extraction_review={k:{'reviewed':True,'conclusion':'synthetic source pass'} for k in ('source_pass','scoring_pass','scope_reconciliation')})
  scores=write(BASE/f'scores-{target}.json',{'tender_source':'fixture line 2','items':[{'id':'S1','name':'fixture','source_ref':'line 2','criteria':[reqs[0]['scope']],'max_score':1}]})
  s['plan']['scoring_basis']={'path':str(scores),'basis_sha256':trace.digest(trace.scoring_basis(json.loads(scores.read_text())))}
+ s['plan']['project_response'].update(keywords=[{'term':t,'requirement':reqs[1]['id']} for t in TERMS],headings={'2':TERMS[:15],'3':TERMS},priorities=[{'chapters':[ch],'basis':'synthetic scope ranking'} for ch in chapters])
  f.save_state(state_path,s)
  return state_path,s
 
@@ -177,7 +181,7 @@ check('Changed stage Word report invalidates final readiness',f.cmd_final_ready(
 original_score=SCORE75.read_bytes();SCORE75.write_bytes(original_score+b'\n')
 check('Changed stage score report invalidates final readiness',f.cmd_final_ready(STATE,FINAL)==2);SCORE75.write_bytes(original_score)
 MISSING=BASE/'missing-module.docx';compose(MISSING,f._ids(s)[:-1]);check('Dropped final module blocked',f.cmd_final_ready(STATE,MISSING)==2)
-FORMAT.write_text(FORMAT.read_text()+'\n');check('Changing frozen pilot format invalidates sample',f.cmd_final_ready(STATE,FINAL)==2);write(FORMAT,{'visual_policy':POLICY,'font_rules':{},'required_level1_titles':[], 'required_figures':[{'name':n,'hard':True,'color_required':True} for n in c.FIGURE_NAMES], 'required_real_photo_slots':[{'name':'现场现状'}],'photo_delivery_stage':'draft'})
+FORMAT.write_text(FORMAT.read_text()+'\n');check('Changing frozen pilot format invalidates sample',f.cmd_final_ready(STATE,FINAL)==2);write(FORMAT,{'visual_policy':POLICY,'font_rules':{},'required_level1_titles':[], 'required_figures':[{'name':n,'hard':True,'color_required':True} for n in c.base_names(POLICY)], 'required_real_photo_slots':[{'name':'现场现状'}],'photo_delivery_stage':'draft'})
 check('Restored identical pilot format returns valid evidence',f.cmd_final_ready(STATE,FINAL)==0)
 
 # Smaller/new project: same scripts, no forced long-document sample.
@@ -187,4 +191,3 @@ check('Common Word location follows current project',c.load_rules(None)['body_st
 rc=subprocess.run([sys.executable,str(ROOT/'编制流程门禁.py'),'run-page-audit','--pilot','--document',str(PILOT),'--report',str(BASE/'no-word.json')],capture_output=True,text=True)
 check('Linux cannot fake native Word pilot execution',rc.returncode==3)
 print(json.dumps({'passed':len(RESULTS),'tests':RESULTS,'limits':'Synthetic report/interface tests only; Windows Word was NOT executed.'},ensure_ascii=False,indent=2))
-

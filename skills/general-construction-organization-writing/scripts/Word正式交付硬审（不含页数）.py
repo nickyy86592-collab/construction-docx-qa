@@ -43,12 +43,14 @@ import json
 import math
 import re
 import sys
+import unicodedata
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from visual_policy import color_profile, planned_figure_names, visual_policy_errors
+import project_response
+from visual_policy import base_names, color_profile, planned_figure_names, visual_policy_errors
 
 
 # -----------------------------
@@ -56,6 +58,7 @@ from visual_policy import color_profile, planned_figure_names, visual_policy_err
 # -----------------------------
 WD_STATISTIC_PAGES = 2
 WD_ACTIVE_END_PAGE_NUMBER = 3
+WD_WITHIN_TABLE = 12
 WD_VERTICAL_POSITION_RELATIVE_TO_PAGE = 6
 WD_GOTO_PAGE = 1
 WD_GOTO_ABSOLUTE = 1
@@ -63,7 +66,19 @@ WD_OUTLINE_BODY_TEXT = 10
 WD_MAIN_TEXT_STORY = 1
 WD_TEXT_RECTANGLE = 0
 WD_SHAPE_RECTANGLE = 1
-AUDIT_VERSION = "1.13.0"
+AUDIT_VERSION = "1.16.0"
+HEADING_ALIGNMENT_DEFAULT = {'1': 'center', '2': 'center', '3': 'left'}
+WORD_HEADING_ALIGNMENT_CHECK = "正文标题对齐_Word"
+BODY_CHART_COUNT_CHECK = "正文图表数量"
+MIN_BODY_CHARTS = 15
+FONT_CHECK = "项目执行字体字号"
+FONT_SCOPES = {"body", "heading1", "heading2", "heading3", "table", "caption"}
+FONT_FIELDS = {"name_east_asia", "name", "size_pt", "bold"}
+CHINESE_FONT_SIZES = {
+    "初": 42, "小初": 36, "一": 26, "小一": 24, "二": 22, "小二": 18,
+    "三": 16, "小三": 15, "四": 14, "小四": 12, "五": 10.5, "小五": 9,
+    "六": 7.5, "小六": 6.5, "七": 5.5, "八": 5,
+}
 LAST_PAGE_BLANK_LIMIT = 0.20
 PRE_FINAL_PAGE_REVIEW_COUNT = 4
 PRE_FINAL_PAGE_BLANK_REVIEW_RATIO = 0.20
@@ -147,15 +162,66 @@ def normalize_toc_title(text: str) -> str:
     return t.strip()
 
 
+def read_rules(path: Optional[Path]) -> Dict[str, Any]:
+    if path is None:
+        return {}
+    incoming = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(incoming, dict):
+        raise AuditError("规则文件顶层必须是 JSON 对象。")
+    return incoming
+
+
+def font_size_points(value):
+    if isinstance(value, str):
+        label = unicodedata.normalize("NFKC", value).strip()
+        label = label.removesuffix("字").removesuffix("号")
+        value = CHINESE_FONT_SIZES.get(label, label)
+    try:
+        points = float(value) if type(value) in (str, int, float) else 0
+    except ValueError:
+        points = 0
+    if not math.isfinite(points) or points <= 0:
+        raise AuditError(f"字号须为正磅值或中文字号，如小四：{value!r}")
+    return int(points) if points.is_integer() else points
+
+
+def effective_font_settings(rules):
+    """Resolve the task prompt's explicit size first, with per-scope fallback."""
+    baseline = rules.get("font_rules")
+    prompt = rules.get("prompt_font_sizes", {})
+    if not isinstance(prompt, dict) or set(prompt) - FONT_SCOPES:
+        raise AuditError("prompt_font_sizes须按正文、标题、表格或题注的适用部位填写明确字号")
+    scope = rules.get("font_body_scope", "text" if "body" in prompt else "all")
+    if scope not in ("text", "all"):
+        raise AuditError("font_body_scope须为text（普通正文）或all")
+    if baseline is None and not prompt:
+        return {"font_rules": None, "font_body_scope": scope}
+    if baseline is not None and (not isinstance(baseline, dict) or set(baseline) - FONT_SCOPES):
+        raise AuditError("font_rules须按正文、标题、表格或题注配置")
+    resolved = {}
+    for role, properties in (baseline or {}).items():
+        if not isinstance(properties, dict) or set(properties) - FONT_FIELDS:
+            raise AuditError(f"未知字体字段：{role}")
+        resolved[role] = {field: value for field, value in properties.items() if value is not None}
+    for role, size in prompt.items():
+        resolved.setdefault(role, {})["size_pt"] = size
+    for role, properties in resolved.items():
+        if "size_pt" in properties:
+            properties["size_pt"] = font_size_points(properties["size_pt"])
+        if not properties:
+            raise AuditError(f"字体字号规则未指定有效字段：{role}")
+        if any(not isinstance(properties[field], str) or not properties[field].strip()
+               for field in ("name_east_asia", "name") if field in properties):
+            raise AuditError(f"字体名称须为非空文字：{role}")
+        if "bold" in properties and type(properties["bold"]) is not bool:
+            raise AuditError(f"加粗设置须为布尔值：{role}")
+    return {"font_rules": resolved, "font_body_scope": scope}
+
+
 def load_rules(path: Optional[Path], page_dir=None) -> Dict[str, Any]:
-    rules = json.loads(json.dumps(DEFAULT_RULES, ensure_ascii=False))
-    incoming = {}
-    if path:
-        with path.open("r", encoding="utf-8") as f:
-            incoming = json.load(f)
-        if not isinstance(incoming, dict):
-            raise AuditError("规则文件顶层必须是 JSON 对象。")
-        rules.update(incoming)
+    incoming = read_rules(path)
+    rules = {**json.loads(json.dumps(DEFAULT_RULES, ensure_ascii=False)), **incoming}
+    rules.update(effective_font_settings(rules))
     # Location only: page target remains exclusively in the project page script.
     import ast
     here=Path(page_dir or Path(__file__).resolve().parent)
@@ -206,6 +272,7 @@ def load_rules(path: Optional[Path], page_dir=None) -> Dict[str, Any]:
     rules['front_matter'] = fm
     table_layout(rules)  # 同一运行期规则中校验表格配置
     toc_layout(rules)  # 校验运行期招标例外；不增加独立配置文件
+    heading_alignment(rules)
     patterns = rules.get('heading_patterns')
     if patterns is not None:
         if not isinstance(patterns,dict) or set(patterns)!= {'1','2','3'}:
@@ -843,7 +910,7 @@ def check_project_parameter_completeness(rules: Dict[str, Any]) -> CheckResult:
         "required_figures": "招标文件/评分要求中的必要图件",
         "required_real_photo_slots": "实景图素材/占位需求",
         "visual_policy": "项目照片判断、增补功能图及配色决策",
-        "font_rules": "招标文件字体字号要求",
+        "font_rules": "项目执行字体字号规则",
     }
     missing = [label for key, label in required_keys.items() if rules.get(key) is None]
     if missing:
@@ -887,6 +954,49 @@ def check_heading_level_presence(headings: List[Dict[str, Any]]) -> CheckResult:
         "存在缺少下一级标题的章或节，或正文缺少标题层级。" if failed else "每章均有节，每节均有三级标题。",
         {"counts": counts, "missing_levels": missing, "chapters_without_sections": chapters_without_sections,
          "sections_without_subheadings": sections_without_subheadings},
+    )
+
+
+def heading_alignment(rules):
+    raw = rules.get('heading_alignment', {})
+    if not isinstance(raw, dict) or set(raw) - {'1', '2', '3', 'source_ref'}:
+        raise AuditError('heading_alignment须按正文1/2/3级填写对齐，可附招标依据source_ref')
+    expected = {level: raw.get(level, value) for level, value in HEADING_ALIGNMENT_DEFAULT.items()}
+    if any(value not in ('left', 'center', 'right', 'both') for value in expected.values()):
+        raise AuditError('正文标题对齐须为left、center、right或both')
+    source = raw.get('source_ref')
+    if expected != HEADING_ALIGNMENT_DEFAULT and (not isinstance(source, str) or not source.strip()):
+        raise AuditError('偏离默认标题对齐须引用招标或有效补遗原文及位置source_ref')
+    return expected
+
+
+def check_heading_alignment(headings, rules, doc=None):
+    """Check effective paragraph alignment for body headings, including Word style inheritance."""
+    expected = heading_alignment(rules)
+    word_alignment = {0: 'left', 1: 'center', 2: 'right', 3: 'both'}
+    failures = []
+    for h in headings:
+        if doc is None:
+            actual = h['alignment']
+            location = {'body_block': h['body_block']}
+        else:
+            location = {'paragraph': h['index'], 'page': h['page']}
+            try:
+                value = int(doc.Paragraphs(h['index']).Format.Alignment)
+                actual = word_alignment.get(value, value)
+            except Exception:
+                actual = None
+        required = expected[str(h['level'])]
+        if actual != required:
+            failures.append({**location, 'level': h['level'], 'title': h['text'],
+                             'expected': required, 'actual': actual})
+    if not headings:
+        failures.append({'reason': '未识别到可核对对齐的正文标题'})
+    return CheckResult(
+        WORD_HEADING_ALIGNMENT_CHECK if doc is not None else '正文标题对齐_静态',
+        'FAIL' if failures else 'PASS',
+        '核对正文各级标题的有效段落对齐。默认一级、二级居中，三级左对齐。',
+        failures or {'checked_headings': len(headings), 'alignment_by_level': expected},
     )
 
 
@@ -1755,6 +1865,9 @@ def check_required_figures(doc, rules: Dict[str, Any]) -> List[CheckResult]:
 
     for item in items:
         name = str(item.get("name", "未命名图件"))
+        # 同名章节常先于题注出现在目录。指定图由同次portable_checks直接绑定正文对象。
+        if any(x.get('name') == name and x.get('kind') == '图' for x in (rules.get('visual_policy') or {}).get('named_exhibits', [])):
+            continue
         keywords = item.get("keywords") or [name]
         hard = bool(item.get("hard", False))
         found_kw = None
@@ -1893,25 +2006,38 @@ def inspect_range_font(rng) -> Dict[str, Any]:
 def check_fonts(doc, records: List[Dict[str, Any]], rules: Dict[str, Any]) -> CheckResult:
     raw = rules.get("font_rules")
     if raw is None:
-        return CheckResult("招标文件字体规则", "FAIL", "尚未取得招标文件字体/字号要求，无法完成硬审。")
+        return CheckResult(FONT_CHECK, "FAIL", "尚未确认项目执行的字体字号规则。")
     fr = raw or {}
     if not fr:
-        return CheckResult("招标文件字体规则", "PASS", "已确认招标文件没有额外字体/字号硬性规定。")
+        return CheckResult(FONT_CHECK, "PASS", "已确认本项目无具体字体字号规则。")
 
     errors: List[Dict[str, Any]] = []
     checked = 0
+    ordinary_body_only = rules.get("font_body_scope") == "text"
+    separate_table = ordinary_body_only or "table" in fr
+    separate_caption = ordinary_body_only or "caption" in fr
     # 重新按 Word Paragraph 索引取 Range，确保能读取有效 Font
     for rec in records:
         if rec["page"] < int(rules["body_start_page"]):
             continue
-        level, _ = classify_heading(rec["text"], rules)
-        key = f"heading{level}" if level else "body"
+        paragraph = doc.Paragraphs(rec["index"])
+        rng = paragraph.Range
+        if separate_table and rng.Information(WD_WITHIN_TABLE):
+            key = "table" if "table" in fr else (None if ordinary_body_only else "body")
+        else:
+            level, _ = classify_heading(rec["text"], rules)
+            key = f"heading{level}" if level else "body"
+            if not level and separate_caption:
+                style = paragraph.Style
+                caption = (str(getattr(style, "NameLocal", style)).casefold() in ("caption", "题注")
+                           or any(_caption_match(rec["text"], label) for label in ("图", "表")))
+                if caption:
+                    key = "caption" if "caption" in fr else (None if ordinary_body_only else "body")
         expected = fr.get(key)
         if not expected:
             continue
         checked += 1
-        p = doc.Paragraphs(rec["index"])
-        actual = inspect_range_font(p.Range)
+        actual = inspect_range_font(rng)
         mismatch = {}
         for k in ("name_east_asia", "name", "size_pt", "bold"):
             if k in expected and expected[k] is not None:
@@ -1922,8 +2048,10 @@ def check_fonts(doc, records: List[Dict[str, Any]], rules: Dict[str, Any]) -> Ch
             errors.append({"text": rec["text"][:80], "page": rec["page"], "type": key, "mismatch": mismatch})
 
     if checked == 0:
-        return CheckResult("招标文件字体规则", "FAIL", "已提供字体规则，但没有匹配到任何可检查段落，无法证明字体要求已被执行，禁止正式交付。")
-    return CheckResult("招标文件字体规则", "FAIL" if errors else "PASS", "发现字体/字号与招标文件参数不一致。" if errors else f"已按配置检查 {checked} 个段落，字体规则通过。", errors or {"checked_paragraphs": checked})
+        return CheckResult(FONT_CHECK, "FAIL", "已配置字体字号规则，但未匹配到适用的段落。")
+    return CheckResult(FONT_CHECK, "FAIL" if errors else "PASS",
+                       "实际字体字号与项目执行值不一致。" if errors else f"已按项目执行值核对 {checked} 个段落。",
+                       errors or {"checked_paragraphs": checked})
 
 
 def summarize(results: Iterable[CheckResult]) -> Tuple[int, int, int, int]:
@@ -1980,10 +2108,13 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
         results.extend(portable_checks(docx_path, rules))
         headings, heading_checks = extract_heading_structure(records, int(rules["body_start_page"]), rules)
         results.extend(heading_checks)
+        if rules.get("project_response") is not None:
+            results.append(measured_priority_shares(doc, headings, rules, page_count))
         results.extend(check_front_page_and_body(doc, records, headings, rules, page_count))
         results.extend(check_toc_layout_word(doc, records, headings, rules))
         results.extend(check_table_layout_word(doc, rules))
         results.append(check_heading_level_presence(headings))
+        results.append(check_heading_alignment(headings, rules, doc))
         results.append(check_required_level1(headings, rules))
         results.append(check_heading_sequence(headings))
         if rules.get("hard_fail_on_mechanical_structure", True):
@@ -2049,7 +2180,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
 
 
 # Portable checks inspect the embedded DOCX bytes, not an external image filename.
-FIGURE_NAMES = ('施工功能分区示意图', '施工进度横道图', '施工进度网络图')
+
 EDITORIAL_RE = re.compile(r'本[章节段](?:应|需|可)(?:写|补充|描述|引用)|(?:后续|此处|这里)(?:补写|扩写|插入正文)|(?:引用|调用|根据)知识库|(?:编制|审核|硬审|页数|门禁)脚本|待完善正文|编制时应|本段可用|本[章节段](?:需|尚需|有待)(?:进一步)?完善|建议补充相关措施|(?:审查|审核|编制)(?:意见|状态)[:：]|(?:本稿|本章|本节|本段)(?:已|尚未|未)(?:通过|完成)(?:审核|审查|复核)|(?:本稿|本章|本节|本段)(?:质量优秀|已达优秀)|待办[:：]|(?:差异|冲突)(?:尚未|未)闭合')
 EDITORIAL_WARN_RE = re.compile(r'疑似符号|得分点|\bskill\b|建议(?:进一步)?补充|(?:正文|本稿|本[章节段])[^。；\n]{0,20}(?:待核实|待完善|待确认|自评|评分)|(?:待补充|待核实|待完善)|(?:资料|参数|差异|冲突)[^。；\n]{0,12}(?:未闭合|尚未关闭)',re.I)
 LANGUAGE_CONTEXT_RE = re.compile(r'监理|审图|图纸会审|审查意见|审核意见|设计单位|整改通知|禁止|不得|严禁|例如|示例|[“「「]|依据[^。；]{0,16}意见')
@@ -2097,7 +2228,7 @@ def rules_digest(rules):
     return hashlib.sha256(json.dumps(rules, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def _docx_blocks(path):
+def _docx_blocks(path, *, text_only=False):
     import zipfile
     import xml.etree.ElementTree as ET
     ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
@@ -2115,6 +2246,10 @@ def _docx_blocks(path):
                 flags[tag] = element.get(w + 'val', '1').lower() not in ('0', 'false', 'off')
         return flags
 
+    def paragraph_alignment(node, prefix):
+        align = node.find(prefix + 'w:jc', ns)
+        return align.get(w + 'val') if align is not None else None
+
     def body_blocks(parent):
         for child in parent:
             if child.tag in (w + 'p', w + 'tbl'):
@@ -2128,11 +2263,13 @@ def _docx_blocks(path):
         styles = ET.fromstring(z.read('word/styles.xml')) if 'word/styles.xml' in z.namelist() else ET.Element('styles')
         style_nodes = {s.get(w + 'styleId'): s for s in styles.findall('w:style', ns)}
         defaults = pagination_flags(styles, 'w:docDefaults/w:pPrDefault/w:pPr/')
+        default_alignment = paragraph_alignment(styles, 'w:docDefaults/w:pPrDefault/w:pPr/') or 'left'
         default_style = next((sid for sid, s in style_nodes.items()
                               if s.get(w + 'type') == 'paragraph' and s.get(w + 'default') in ('1', 'true')), None)
         style_info = {}
         for style_id, node in style_nodes.items():
             outline = None
+            alignment = None
             caption_style = False
             pagination = {}
             seen = set()
@@ -2141,13 +2278,15 @@ def _docx_blocks(path):
                 level = node.find('w:pPr/w:outlineLvl', ns)
                 if level is not None and outline is None:
                     outline = int(level.get(w + 'val')) + 1
+                if alignment is None:
+                    alignment = paragraph_alignment(node, 'w:pPr/')
                 name = node.find('w:name', ns)
                 caption_style |= name is not None and name.get(w + 'val', '').lower() in ('caption', '题注')
                 for tag, value in pagination_flags(node, 'w:pPr/').items():
                     pagination.setdefault(tag, value)
                 parent = node.find('w:basedOn', ns)
                 node = style_nodes.get(parent.get(w + 'val')) if parent is not None else None
-            style_info[style_id] = (outline, caption_style, pagination)
+            style_info[style_id] = (outline, caption_style, pagination, alignment)
 
         body = ET.fromstring(z.read('word/document.xml')).find('w:body', ns)
         table_index = 0
@@ -2159,25 +2298,43 @@ def _docx_blocks(path):
                 table_index += 1
             style = el.find('w:pPr/w:pStyle', ns)
             style_id = style.get(w + 'val') if style is not None else default_style
-            outline, caption_style, inherited_pagination = style_info.get(style_id, (None, False, {}))
+            outline, caption_style, inherited_pagination, inherited_alignment = style_info.get(
+                style_id, (None, False, {}, None))
+            alignment = paragraph_alignment(el, 'w:pPr/') or inherited_alignment or default_alignment
+            # The package uses left-to-right Chinese headings. Word checks the rendered alignment again.
+            alignment = {'start': 'left', 'end': 'right'}.get(alignment, alignment)
             level = el.find('w:pPr/w:outlineLvl', ns)
             if level is not None:
                 outline = int(level.get(w + 'val')) + 1
             images = []
-            for blip in el.findall('.//a:blip', ns):
-                rid = blip.get('{'+ns['r']+'}embed')
-                target = targets.get(rid)
-                if target:
-                    import posixpath
-                    member = posixpath.normpath('word/'+target) if not target.startswith('/') else target.lstrip('/')
-                    images.append({'member': member, 'bytes': z.read(member)})
+            if not text_only:
+                for blip in el.findall('.//a:blip', ns):
+                    rid = blip.get('{'+ns['r']+'}embed')
+                    target = targets.get(rid)
+                    if target:
+                        import posixpath
+                        member = posixpath.normpath('word/'+target) if not target.startswith('/') else target.lstrip('/')
+                        images.append({'member': member, 'bytes': z.read(member)})
             borders = el.findall('.//w:tblBorders/*', ns) + el.findall('.//w:tcBorders/*', ns)
             framed = any(b.get('{'+ns['w']+'}val') not in (None, 'nil', 'none') for b in borders)
             heights = [float(x.get('{'+ns['w']+'}val', '0'))/20 for x in el.findall('.//w:trHeight', ns)]
             drawing_count = len(el.findall('.//w:drawing', ns) or el.findall('.//w:pict', ns))
+            table_content, table_paragraphs = (), ()
+            if is_table and text_only:
+                table_paragraphs = tuple(''.join(x.text or '' for x in p.iter(w + 't'))
+                                         for p in el.iter(w + 'p'))
+            elif is_table:
+                table_content = tuple(
+                    tuple(normalize_spaces(''.join(x.text or '' for x in cell.iter(w + 't')))
+                          for cell in row.findall('w:tc', ns))
+                    for row in rows
+                )
             blocks.append({
                 'text': text, 'images': images, 'framed': framed, 'height_pt': max(heights, default=0),
                 'outline': outline, 'caption_style': caption_style, 'table_index': table_index if is_table else None,
+                'alignment': alignment,
+                'table_content': table_content,
+                'table_paragraphs': table_paragraphs,
                 'drawing_count': drawing_count,
                 'pagination': {} if is_table else {
                     **defaults, **inherited_pagination, **pagination_flags(el, 'w:pPr/'),
@@ -2304,8 +2461,72 @@ def section_heading_review_errors(document, review):
     return errors
 
 
+def body_citation_review(document, review, rules=None):
+    """Verify registered source names and locators in their actual body paragraphs."""
+    if (not isinstance(review, dict) or review.get("reviewed") is not True
+            or not isinstance(review.get("conclusion"), str) or not review["conclusion"].strip()
+            or not isinstance(review.get("items"), list)):
+        return 0, ["未完成正文重要内容的就地引用复核 body_citations"]
+
+    def compact(value):
+        return re.sub(r"\s+", "", unicodedata.normalize("NFKC", value))
+
+    def heading_title(text, level):
+        text = unicodedata.normalize("NFKC", text)
+        numbering = r"^(?:第[一二三四五六七八九十百零〇两\d]+[章节]|[一二三四五六七八九十百零〇两]+、|\(?\d+(?:\.\d+)*[).、:]?(?=\s|[^\d]))[、:.\s]*"
+        title = re.sub(numbering, "", text)
+        pattern = ((rules or {}).get("heading_patterns") or {}).get(str(level))
+        match = re.match(pattern, text) if pattern else None
+        if title == text and match:
+            title = text[match.end(1):].lstrip("章节.、:) -\t")
+        return compact(title)
+
+    source_lists = {"编制依据", "编制依据及引用文件", "引用文件", "引用文件清单",
+                    "适用规范", "适用规范清单", "采用规范与标准", "参考文献"}
+    blocks = _docx_blocks(document, text_only=True)
+    first_chapter = next((i for i, b in enumerate(blocks)
+                          if b["outline"] == 1 and classify_heading(b["text"], rules)[0] == 1), None)
+    if first_chapter is None:
+        first_chapter = next((i for i, b in enumerate(blocks) if b["outline"] == 1), len(blocks))
+    paragraphs = []
+    excluded_level = None
+    for block in blocks[first_chapter:]:
+        level = block["outline"]
+        text = block["text"]
+        if level in (1, 2, 3):
+            if excluded_level is not None and level <= excluded_level:
+                excluded_level = None
+            if excluded_level is None and heading_title(text, level) in source_lists:
+                excluded_level = level
+            continue
+        if excluded_level is not None:
+            continue
+        if block["table_index"] is not None:
+            if not block["photo_frame"]:
+                paragraphs.extend(compact(p) for p in block["table_paragraphs"] if p)
+        elif text and not _is_layout_object(block):
+            paragraphs.append(compact(text))
+
+    errors = []
+    counted = set()
+    for index, item in enumerate(review["items"], 1):
+        fields = ("subject", "source_name", "locator", "body_quote", "source_ref")
+        if not isinstance(item, dict) or any(
+                not isinstance(item.get(key), str) or not item[key].strip() for key in fields):
+            errors.append(f"正文引用第{index}条缺具体事项、来源全名、定位、正文引文或原件依据")
+            continue
+        subject, name, locator, quote = (compact(item[key]) for key in fields[:4])
+        claim = quote.replace(name, "", 1).replace(locator, "", 1)
+        claim = re.sub(r"依据|根据|按照|执行|参见|详见|规定|条款|第|条|款|按|见|[\W_\d]", "", claim)
+        if not claim or name not in quote or locator not in quote or not any(quote in paragraph for paragraph in paragraphs):
+            errors.append(f"正文引用第{index}条未在对应正文处同时找到来源名称和定位：{item['subject']}")
+            continue
+        counted.add((subject, name, locator))
+    return len(counted), errors
+
+
 def check_caption_numbering(blocks, rules):
-    """Bind each figure or data table to its own caption in document order."""
+    """Bind body objects to their captions and count distinct figures and data tables."""
     table_kinds = {item['index']: item.get('kind', 'data') for item in table_layout(rules).get('tables', [])}
     objects = {'图': [], '表': []}
     for i, block in enumerate(blocks):
@@ -2323,6 +2544,7 @@ def check_caption_numbering(blocks, rules):
 
     object_indices = set(objects['图']) | set(objects['表'])
     results = []
+    chart_counts = {}
     for label, preferred_step in (('图', 1), ('表', -1)):
         captions = {
             i: match
@@ -2376,6 +2598,26 @@ def check_caption_numbering(blocks, rules):
             else f'已核对{len(objects[label])}个{label}及其连续编号。',
             faults or {'count': len(objects[label])},
         ))
+        counted = set()
+        for i in attached:
+            block = blocks[i]
+            if label == '图':
+                if block['photo_frame'] or block['drawing_count'] != 1:
+                    continue
+                images = tuple(sorted(hashlib.sha256(pic['bytes']).hexdigest() for pic in block['images']))
+                counted.add(images or ('drawing', i))
+            elif any(cell for row in block['table_content'] for cell in row):
+                counted.add(block['table_content'])
+        chart_counts[label] = len(counted)
+    total = sum(chart_counts.values())
+    shortfall = max(0, MIN_BODY_CHARTS - total)
+    results.append(CheckResult(
+        BODY_CHART_COUNT_CHECK, 'WARN' if shortfall else 'PASS',
+        f"正文有{chart_counts['图']}个图、{chart_counts['表']}个表，合计{total}个。"
+        + (f'少于{MIN_BODY_CHARTS}个，差{shortfall}个，须补充有效图表或记录有依据的不足原因。' if shortfall else ''),
+        {'figures': chart_counts['图'], 'tables': chart_counts['表'], 'total': total,
+         'minimum': MIN_BODY_CHARTS, 'shortfall': shortfall},
+    ))
     return results
 
 
@@ -2424,15 +2666,49 @@ def _color_metrics(raw):
             'foreground_color_ratio': colored/max(1,foreground), 'hue_groups': len(substantive)}
 
 
+def measured_priority_shares(doc, headings, rules, page_count):
+    """用每章首页的物理页和版心纵坐标，折算同页交界。"""
+    try:
+        front = rules['body_start_page'] - 1
+        total = page_count - front
+        starts = []
+        for h in headings:
+            if h['level'] != 1:
+                continue
+            pos = h['start']
+            r = doc.Range(pos, pos + 1)
+            doc.ActiveWindow.View.Type = 3
+            doc.ActiveWindow.ScrollIntoView(r, True)
+            box, y = _page_body_box(r), _range_vertical_y(doc, pos)
+            page = page_of_range(r)
+            if not box or y is None or page <= front:
+                raise ValueError('无法定位章首版心：'+h['text'])
+            offset = min(1., max(0., (y-box['body_top_pt']) / box['usable_height_pt']))
+            starts.append((h['text'], page-front-1+offset))
+        if not starts:
+            raise ValueError('正文无章标题')
+        starts[0] = (starts[0][0], 0.)
+        pages = {name: end-start for ((name,start),(_,end)) in zip(starts,starts[1:]+[('',total)])}
+        if len(starts) != len(pages) or min(pages.values()) <= 0:
+            raise ValueError('章边界重复或计量次序有误')
+        problems, data = project_response.priority_errors(rules['project_response']['priorities'], pages, total)
+    except (KeyError, ValueError, TypeError, AttributeError) as exc:
+        problems, data = [str(exc)], []
+    return CheckResult('重点章节实际篇幅', 'FAIL' if problems else 'PASS',
+                       '；'.join(problems) or '按Word正文版面逐项达到规划下限。', data)
+
+
 def portable_checks(document, rules):
     blocks = _docx_blocks(document)
     body_start = next((i for i, block in enumerate(blocks)
                        if block['outline'] == 1 and classify_heading(block['text'].strip(), rules)[0] == 1), 0)
     body_blocks = blocks[body_start:]
-    headings = [dict(block, level=block['outline']) for block in body_blocks
-                if block['outline'] in (1, 2, 3) and block['text'].strip()]
+    headings = [dict(block, level=block['outline'], body_block=i)
+                for i, block in enumerate(body_blocks, body_start + 1)
+                if block['table_index'] is None and block['outline'] in (1, 2, 3) and block['text'].strip()]
     structure = check_heading_level_presence(headings)
     out = [CheckResult('静态' + structure.name, structure.status, structure.message, structure.details)]
+    out.append(check_heading_alignment(headings, rules))
     out.extend([check_section_title_punctuation(body_blocks, rules), check_body_flow_static(body_blocks, rules)])
     out.extend(check_caption_numbering(body_blocks, rules))
     configured = rules.get('required_figures')
@@ -2441,12 +2717,32 @@ def portable_checks(document, rules):
     if policy_errors:
         return out + [CheckResult('项目图文决策', 'FAIL', '项目照片/配色/功能图安排尚未满足要求。', policy_errors)]
     out.append(CheckResult('项目图文决策', 'PASS', '已核对项目判断、特殊要求依据及图件计划；专业价值仍须实际审查。'))
+    spec = rules.get('project_response')
+    if spec is None:
+        out.append(CheckResult('标题关键词分层硬审', 'FAIL', '须从编前规划载入project_response'))
+    else:
+        try:
+            actual = {k:[h['text'] for h in headings if h['level']==int(k)] for k in ('2','3')}
+            problems, counts = project_response.title_coverage(spec, actual)
+            prompted = (rules.get('prompt_font_sizes') or {}).get('body')
+            font = spec.get('font_budget')
+            if (prompted is None) != (font is None) or (prompted is not None and font_size_points(prompted) != font.get('size_pt')):
+                problems.append('提示词指定正文字号与编前容量测算不一致')
+        except (TypeError, KeyError, ValueError, AttributeError) as exc:
+            problems, counts = [str(exc)], {}
+        out.append(CheckResult('标题关键词分层硬审', 'FAIL' if problems else 'PASS',
+                               '；'.join(problems) or '已按正文实际标题分层去重计数。', counts))
+    issues = project_response.named_errors(body_blocks, policy.get('named_exhibits', []), _caption_match)
+    out.append(CheckResult('招标指定图表原名与对象', 'FAIL' if issues else 'PASS',
+                           '；'.join(issues) or '按同名章节目、题注及对应对象逐项核对。'))
     used = set()
     profile = color_profile(policy)
     names = list(dict.fromkeys(planned_figure_names(policy) + [x['name'] for x in configured if x.get('hard') is True]))
     for name in names:
         item = next(x for x in configured if x.get('name') == name)
         indices = [i for i,b in enumerate(blocks) if _caption_match(b['text'], '图') and name in b['text']]
+        if any(x['kind'] == '图' and x['name'] == name for x in policy.get('named_exhibits', [])):
+            indices = [i for i in indices if _caption_match(blocks[i]['text'], '图').group(2) == name]
         if len(indices) != 1:
             out.append(CheckResult('嵌入彩图_'+name, 'FAIL', '须有唯一的正式图题和实际嵌入图。', {'captions': len(indices)}))
             continue
@@ -2472,7 +2768,7 @@ def portable_checks(document, rules):
             out.append(CheckResult('图件竖向_'+name, 'PASS' if portrait_ok else 'FAIL', '图件须按竖向画布组织。', metrics))
         except Exception as e:
             out.append(CheckResult('彩图配色_'+name, 'FAIL', '无法检测嵌入图片颜色，不能当作通过：'+str(e)))
-        if name not in FIGURE_NAMES:
+        if name not in base_names(policy):
             anchor = item.get('context_anchor', '')
             neighbours = ''.join(b['text'] for j,b in enumerate(blocks[max(0,index-4):index+5], max(0,index-4))
                                  if j != index and not _caption_match(b['text'], '图'))
@@ -2522,19 +2818,31 @@ def static_audit(document, rules_path, report_path,page_dir=None):
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="通用 Word 正式交付硬审脚本（不含页数目标审核）")
-    p.add_argument("document", type=Path, help="待审 Word 文件路径")
+    p.add_argument("document", nargs="?", type=Path, help="待审 Word 文件路径")
     p.add_argument("--page-dir",type=Path,default=None,help="当前唯一项目页数脚本目录，自动派生正文页定位")
-    p.add_argument("--static-only", action="store_true", help="跨平台静态检测标题层级、图表编号、嵌入彩图、照片框及内部语言，不代表Word版式验收")
+    p.add_argument("--static-only", action="store_true", help="静态检测标题层级与对齐、图表编号与数量、彩图、照片框及内部语言")
     p.add_argument("--rules", type=Path, default=None, help="项目规则 JSON（可选）")
+    p.add_argument("--print-font-rules", action="store_true", help="输出用于编排及核验的生效字体字号")
     p.add_argument("--report", type=Path, default=None, help="审查报告 JSON 输出路径（可选）")
     p.add_argument("--evidence-dir", type=Path, default=None, help="彩图留白异常页证据输出目录（可选；默认与报告同目录）")
-    return p.parse_args()
+    args = p.parse_args()
+    if args.print_font_rules and args.rules is None:
+        p.error("--print-font-rules 需要 --rules")
+    if not args.print_font_rules and args.document is None:
+        p.error("需要待审 Word 文件路径")
+    return args
 
 
 def main() -> int:
     args = parse_args()
-    report = args.report or args.document.with_name(args.document.stem + "_audit_report.json")
     try:
+        if args.print_font_rules:
+            settings = effective_font_settings(read_rules(args.rules))
+            if settings["font_rules"] is None:
+                raise AuditError("尚未确认项目执行的字体字号规则")
+            print(json.dumps(settings, ensure_ascii=False, indent=2))
+            return 0
+        report = args.report or args.document.with_name(args.document.stem + "_audit_report.json")
         if args.static_only:
             return static_audit(args.document, args.rules, report,args.page_dir)
         return audit(args.document, args.rules, report, args.evidence_dir,args.page_dir)
