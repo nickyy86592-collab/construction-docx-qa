@@ -44,6 +44,7 @@ def calculate(model):
             first, last = day(t["start"]), day(t["finish"])
             previous = None
             end_day = None
+            used_end = None
             for d, begin, end in windows:
                 day(d)
                 begin, end = Decimal(str(begin)), Decimal(str(end))
@@ -56,7 +57,8 @@ def calculate(model):
                     spans[resource, d].append((begin, end, label))
                 remaining -= rate * (end - begin)
                 end_day = d
-            boundaries[label]=(windows[0], next((w for w in reversed(windows) if w[0]==end_day),windows[-1]))
+                used_end = (d,begin,end)
+            boundaries[label]=(windows[0],used_end)
             if remaining > 0 or windows[0][0] != first or end_day != last:
                 errors.append(f"{label} 持续时间不符：登记D{first}—D{last}，按窗口复算至D{end_day}，剩余量{max(0, remaining)}")
             if not isinstance(t["ready"],dict) or not set(plant)<=t["ready"].keys():
@@ -76,7 +78,7 @@ def calculate(model):
                     errors.append(f"{label} 紧前活动或技术间歇无效：{pred} + {rest}日")
                     continue
                 finish=by_id[pred]["finish"]
-                same_day=(rest==0 and first==finish and boundaries[label][0][1]>=boundaries[pred][1][2])
+                same_day=(rest==0 and first==finish and Decimal(str(boundaries[label][0][1]))>=boundaries[pred][1][2])
                 if pred==label or (first<=finish+rest and not same_day):
                     errors.append(f"{label} 紧前活动或技术间歇冲突：{pred} + {rest}日")
         for (resource, d), entries in spans.items():

@@ -1,14 +1,18 @@
 {
-  "source_skill": "general-construction-organization-writing",
-  "version": "r20-泾县医院",
-  "format_audit_version": "1.16.0",
+  "source_skill": "general-construction-organization-writing-r21",
+  "version": "r21-泾县医院",
+  "format_audit_version": "1.17.0",
   "source_coverage_version": 1,
   "common_files_sha256": {
-    "编制流程门禁.py": "d424e41202dc779f1c4c13fc1d8087bdc9398c71eb2d160072c2f678df41381b",
-    "Word正式交付硬审（不含页数）.py": "6e627cf0e0ffe8fe9a4cd2cfd2f06afbca8f8361f5c7d26dd7703a8465d489ec",
-    "评分响应核验.py": "f13d34cdf2c3acd4b35d78c091342bcbf965b70555bbb7b421cbe052c46ff69f",
+    "Word正式交付硬审（不含页数）.py": "b83c6e0c853d8578809e78b527846b42017b41e5cde6af5f0185965a519f6dca",
+    "boq.py": "750694dc788f96d91c24db7821fd22c5f0807049eaec7504044596e2c5e44091",
+    "hard_checks.py": "33dcc39d423eb1182927509710fe0af37e86f21eb8eb95748cc58b9aca2cdacb",
+    "project_response.py": "a601c496df19e73b53893d1e86bd76373e377decd5f22f552a0d5215bb7c625f",
+    "release_docx.py": "48b4472f916523f40ab50e65382285da4dc020ce2f236fd8d9145f7fe8e1c9cd",
+    "schedule.py": "48334486661a80cb7549d953d3ebd5a019a68245743fdde333dc192eece52864",
     "source_coverage.py": "f7652ebea2283d9c10ad444898eb9d9214a21bfd89337639977038c40c4fa05b",
     "visual_policy.py": "42dcedebc67cc6a518e5fe306fa8953f3ad3986db3d6d047993bad4734b9a35d",
-    "project_response.py": "a601c496df19e73b53893d1e86bd76373e377decd5f22f552a0d5215bb7c625f"
+    "编制流程门禁.py": "5b05ca898be31e22b57f8986962715cdf246e66fa80dd57a9ea66bd6b1edf11c",
+    "评分响应核验.py": "f13d34cdf2c3acd4b35d78c091342bcbf965b70555bbb7b421cbe052c46ff69f"
   }
 }

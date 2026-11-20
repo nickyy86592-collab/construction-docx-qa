@@ -1220,6 +1220,10 @@ def registry_errors(state,base,ids=None,document=None):
         if not fresh_file({'path':row.get('review_path'),'sha256':row.get('review_sha256')},base):
             errors.append('模块核查记录丢失或改变：'+mid)
         module=next((m for m in _modules(state) if m.get('id')==mid),None)
+        if module and any(x["module"]==mid for x in (state.get("plan",{}).get("hard_checks") or {}).get("measures",[])):
+            applicable=[x for x in state["plan"]["hard_checks"]["measures"] if x["module"]==mid]
+            if row.get("measures_basis")!=digest(applicable):
+                errors.append("适用措施或完成条件已变，须复核原模块："+mid)
         if row.get('review_contract') == REVIEW_CONTRACT and module and row.get('requirements_sha256') != module_requirements_digest(state,module,legacy=row.get('source_response_version') != 1):
             errors.append('模块评分/范围依据已改变，须定点复核：'+mid)
         if word_text is not None:
@@ -1228,7 +1232,7 @@ def registry_errors(state,base,ids=None,document=None):
                 errors.append('合并DOCX中缺少模块正文探针：'+mid)
             if fresh_file({'path':row.get('source_path'),'sha256':row.get('source_sha256')},base):
                 import re
-                raw=_manuscript(Path(row['source_path']))[0]
+                raw=_manuscript(_resolve_record(row['source_path'],base))[0]
                 content=re.sub(r'[^\w]','',raw)
                 actual=re.sub(r'[^\w]','',_manuscript(document)[0])
                 chunks=[content[i:i+100] for i in range(0,len(content),100)]
@@ -1265,7 +1269,7 @@ def effective_budget(state,base):
 
 def detailed_plan_errors(state,base,target):
     errors=[];p=state.get('plan') or {};mods=p.get('modules');reqs=p.get('requirements')
-    errors.extend(hard_checks.plan_errors(state))
+    errors.extend(hard_checks.plan_errors(state,base))
     errors.extend(project_response.plan_errors(state, base, fresh_file))
     if type(p.get('revision')) is not int or p['revision']<1:errors.append('规划须有正整数revision')
     if not isinstance(reqs,list) or not reqs:
@@ -1459,6 +1463,8 @@ def cmd_module_checkpoint(state_path,mid,source_path,review_path):
                 elif cp.get('page_source')=='microsoft_word':
                     wr=cp.get('word_report') or {}
                     if not fresh_file({'path':wr.get('report_file'),'sha256':wr.get('report_sha256')},state_path.parent):errors.append(f'{stage}%阶段Word报告失效')
+                if "hard_checks" in state.get("plan",{}) and not fresh_file(cp.get("hard_review",{}),state_path.parent):
+                    errors.append(f'{stage}%四项复核已失效，不能推进新模块')
                 score = cp.get('score_report') or {}
                 if not fresh_file(score, state_path.parent):
                     errors.append(f'{stage}%阶段评分核验未完成或已失效，不能推进新模块')
@@ -1485,6 +1491,7 @@ def cmd_module_checkpoint(state_path,mid,source_path,review_path):
         if key!=mid and row.get('source_sha256')==sha256(source_path):errors.append('不同模块不能重复使用完全相同正文')
     if errors:return emit_gate(errors,'')
     state.setdefault('module_registry',{})[mid]={'status':'complete','source_path':str(source_path.resolve()),'source_sha256':sha256(source_path),
+        'measures_basis':digest([x for x in state.get('plan',{}).get('hard_checks',{}).get('measures',[]) if x['module']==mid]),
         'source_response_version':1 if state.get('schema_version') == '3.2' else 0,
         'review_contract':REVIEW_CONTRACT,'requirements_sha256':module_requirements_digest(state,module),
         'review_path':str(review_path.resolve()),'review_sha256':sha256(review_path),'normal_characters':normal_chars,'probe_quotes':quotes,'saved_at':now_iso()}
@@ -1589,6 +1596,8 @@ def cmd_next(state_path):
                                              for mid, value in cp.get('module_source_hashes', {}).items())
                                      and (cp.get('status') == 'PROVISIONAL' or fresh_file(
                                          {'path': word.get('report_file', ''), 'sha256': word.get('report_sha256')}, base)))
+                            if fresh and "hard_checks" in state.get("plan",{}):
+                                fresh=fresh_file(cp.get("hard_review",{}),base)
                             if fresh:
                                 fresh = not stage_score_errors(state, _resolve_record(cp['snapshot_path'], base), stage,
                                                                _resolve_record(score['path'], base))

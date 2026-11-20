@@ -353,6 +353,13 @@ class SourceCoverageTests(unittest.TestCase):
             'keywords':[{'term':t, 'requirement':next(r['id'] for r in self.req if t in r['scope'])} for t in words],
             'headings':{'2':words[:15], '3':words},
             'priorities':[{'chapters':[c['chapter']], 'basis':'synthetic scope'} for c in plan['chapter_plan']]}
+        plan['hard_checks'] = {'bills':[{'source':'B','sha256':sc.file_hash(self.boq),
+            'tables':[{'sheet':'工程量','title':'工程量','trade':'标线施工','trade_cell':[2,1]}]}],
+            'figures':[{'name':n,'kind':k,'module':'M','basis':'测试项目图件规划',
+                'elements':list(flow.hard_checks.ELEMENTS[k]) or ['作业区']}
+                for n,k in flow.hard_checks.required_figures(self.state).items()],
+            'measures':[{'id':'标线','module':'M','requirement':self.req[0]['id'],'basis':'试件招标条件','completion':'实测标线厚度'}],
+            'schedule':{'tasks':[{'id':'A','module':'M'}]},'gaps':[]}
         self.state['phase']='PLANNING' 
         self.state['gate']={'reason':'未完成篇幅规划，禁止开始正式正文'}
         path=write(self.base/'no-page-state.json',self.state)

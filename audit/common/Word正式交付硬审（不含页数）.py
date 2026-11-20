@@ -66,7 +66,7 @@ WD_OUTLINE_BODY_TEXT = 10
 WD_MAIN_TEXT_STORY = 1
 WD_TEXT_RECTANGLE = 0
 WD_SHAPE_RECTANGLE = 1
-AUDIT_VERSION = "1.16.0"
+AUDIT_VERSION = "1.17.0"
 HEADING_ALIGNMENT_DEFAULT = {'1': 'center', '2': 'center', '3': 'left'}
 WORD_HEADING_ALIGNMENT_CHECK = "正文标题对齐_Word"
 BODY_CHART_COUNT_CHECK = "正文图表数量"
@@ -1906,6 +1906,42 @@ def _placeholder_has_visible_frame(doc, placeholder: str) -> bool:
     return False
 
 
+def figure_pages(doc, records):
+    """只记紧邻题注的真实图片所在总页，图题跨页时返回空数组。"""
+    from bisect import bisect_right
+    # Physical page starts avoid adjusted numbering and Range.Information COM dispatch ambiguity.
+    starts=[int(doc.GoTo(What=WD_GOTO_PAGE,Which=WD_GOTO_ABSOLUTE,Count=n).Start)
+            for n in range(1,int(doc.ComputeStatistics(WD_STATISTIC_PAGES))+1)]
+    shapes=[]
+    for collection,attr in ((doc.InlineShapes,"Range"),(doc.Shapes,"Anchor")):
+        for n in range(1,int(collection.Count)+1):
+            rng=getattr(collection.Item(n),attr)
+            shapes.append((int(rng.Start),int(rng.End)))
+    pages={}
+    for rec in records:
+        if not _caption_match(rec["text"],"图"):
+            continue
+        begin,end=rec["start"],rec["end"]
+        candidates=[]
+        for left,right in shapes:
+            gap=max(begin-right,left-end,0)
+            if gap>8:
+                continue
+            lo,hi=(right,begin) if right<=begin else (end,left) if end<=left else (begin,begin)
+            if lo<hi and re.search(r"[^\s\x00-\x1f]",doc.Range(lo,hi).Text or ""):
+                continue
+            candidates.append((0 if left<end else 1,gap,left))
+        hits=[]
+        if candidates:
+            rank,dist,pos=min(candidates)
+            hits=[bisect_right(starts,x) for side,gap,x in candidates if (side,gap)==(rank,dist)
+                  and bisect_right(starts,x)==bisect_right(starts,begin)]
+        if not hits:
+            print("WORD_FIGURE_LOCATION_UNRESOLVED",repr(rec["text"]),begin,end,shapes,starts)
+        pages.setdefault(rec["text"],[]).extend(hits)
+    return pages
+
+
 def check_real_photo_slots(doc, rules: Dict[str, Any]) -> List[CheckResult]:
     """草稿允许标注真实照片占位；最终版必须有真实照片的来源记录并在图注旁确有图片。"""
     raw = rules.get("required_real_photo_slots")
@@ -2146,6 +2182,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
             "layout_engine": "Microsoft Word",
             "document": str(docx_path.resolve()),
             "document_sha256": sha256_file(docx_path),
+            "figure_pages": figure_pages(doc, records),
             "audited_at": started,
             "delivery_status": overall,
             "hard_failure_count": len(hard_failures),

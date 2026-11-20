@@ -123,7 +123,7 @@ def case(base,wrong=None):
     rec=hc.pending_review()
     rec["bill_scan"]="按样稿各正文段、表行及题注反查所见引用"
     claims=[(417,dict(item="45",code="010518017001",name="嵌缝、打胶",quantity="1",unit="项",feature=FEATURE)),
-            (50,dict(item="1",code=("011606003009" if wrong=="bill" else "011606003001"),name="拆除工程"))]
+            (50,dict(item="1",code=("011601001001" if wrong=="bill" else "011606003001"),name="拆除工程"))]
     for i,(row,fields) in enumerate(claims,1):
         quote=f"装饰清单第{fields['item']}项 {fields['name']}，编码{fields['code']}"
         if row==417:quote+="，1项，"+FEATURE
@@ -178,9 +178,48 @@ class HardTests(unittest.TestCase):
     def test_four_positive_controls_in_final_word(self):
         self.assertEqual(self.audit(),[])
 
+    def test_item_45_original_row(self):
+        s,r,w,d=case(self.base)
+        rows=hc.document_rows(common._docx_blocks(d))
+        c=r["hard_checks"]["bills"][0]
+        self.assertEqual((c["row"],c["fields"]["code"],c["fields"]["quantity"],c["fields"]["unit"]),(417,"010518017001","1","项"))
+        self.assertEqual(boq.check({"P1":rows["P1"]},[c],boq.index(s,d.parent),{"S":c["sha256"]}),[])
+
+    def test_site_plan_observed_spatial_elements(self):
+        s,r,w,d=case(self.base)
+        spec=s["plan"]["hard_checks"]
+        self.assertEqual(hc.figure_errors(spec["figures"][:1],r["hard_checks"]["figures"],common._docx_blocks(d),common,w,spec["schedule"],d),[])
+
+    def test_measure_module_evidence(self):
+        s,r,w,d=case(self.base)
+        rows=r["hard_checks"]["measures"]
+        for e in rows["封胶"].values():
+            e["loc"]="L1"
+        self.assertEqual(hc.module_errors(s,{"id":"M"},"；".join(MEASURE),{"measures":rows},d.parent),[])
+        self.assertTrue(hc.module_errors(s,{"id":"M"},"；".join(MEASURE),{"measures":{"封胶":{"结论":"已复核"}}},d.parent))
+
+    def test_parallel_separate_crews(self):
+        self.assertEqual(schedule.calculate(schedule_model()),[])
+
+    def test_final_picture_replacement_invalidates_visual_review(self):
+        s,r,w,d=case(self.base)
+        good=copy.deepcopy(r["hard_checks"]["figures"])
+        s,r,w,d=case(self.base,"figure")
+        r["hard_checks"]["figures"]=good
+        self.assertTrue(any("指纹" in e for e in hc.audit(s,d.parent,d,r,common,w)))
+
+    def test_derived_measure_value_uses_original_inputs(self):
+        source={"q":"工程量48米","r":"每班组每小时完成6米"}
+        data={"operation":"divide","unit":"小时","basis":"工程量除以每小时产能","inputs":[
+            {"source":"S","unit_id":i,"quote":source[i],"value":n} for i,n in (("q","48"),("r","6"))]}
+        lookup=lambda sid,uid:source[uid]
+        self.assertEqual(hc.calculated_value(data,lookup),8)
+        data["inputs"][0]["value"]="49"
+        self.assertIsNone(hc.calculated_value(data,lookup))
+
     def test_wrong_demolition_code(self):
         errors=self.audit("bill")
-        self.assertTrue(any("P2" in e and "第50行" in e and "011606003001" in e and "011606003009" in e for e in errors),errors)
+        self.assertTrue(any("P2" in e and "第50行" in e and "011606003001" in e and "011601001001" in e for e in errors),errors)
 
     def test_same_caption_flowchart(self):
         self.assertTrue(any("图件 图1" in e for e in self.audit("figure")))

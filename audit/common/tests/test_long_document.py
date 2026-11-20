@@ -12,7 +12,7 @@ if len(sys.argv)>1:ORIGIN=Path(sys.argv[1]);COMMON=ORIGIN/'scripts'
 else:COMMON=Path(__file__).resolve().parents[1]
 TEMPDIR=tempfile.TemporaryDirectory();BASE=Path(TEMPDIR.name)
 ROOT=BASE/'scripts';ROOT.mkdir()
-for name in ('编制流程门禁.py','Word正式交付硬审（不含页数）.py','评分响应核验.py','visual_policy.py','source_coverage.py','project_response.py'):shutil.copy2(COMMON/name,ROOT/name)
+for name in ('编制流程门禁.py','Word正式交付硬审（不含页数）.py','评分响应核验.py','visual_policy.py','source_coverage.py','project_response.py','boq.py','schedule.py','hard_checks.py'):shutil.copy2(COMMON/name,ROOT/name)
 PAGE=ROOT/'测试项目页数硬审.py'
 PAGE.write_text('EXPECTED_BODY_PAGES = 395\nPAGE_TOLERANCE = 5\nFRONT_MATTER_PAGES = 1\n')
 sys.path.insert(0,str(ROOT))
@@ -69,6 +69,17 @@ def start_case(target=395,tol=5,front=1):
  scores=write(BASE/f'scores-{target}.json',{'tender_source':'fixture line 2','items':[{'id':'S1','name':'fixture','source_ref':'line 2','criteria':[reqs[0]['scope']],'max_score':1}]})
  s['plan']['scoring_basis']={'path':str(scores),'basis_sha256':trace.digest(trace.scoring_basis(json.loads(scores.read_text())))}
  s['plan']['project_response'].update(keywords=[{'term':t,'requirement':reqs[1]['id']} for t in TERMS],headings={'2':TERMS[:15],'3':TERMS},priorities=[{'chapters':[ch],'basis':'synthetic scope ranking'} for ch in chapters])
+ # Stage views in this fixture precede the final planning module.
+ last=mods[-1]['id']
+ s['plan']['hard_checks']={'bills':[], 'gaps':[],
+   'figures':[{'name':name,'kind':kind,'basis':'fixture figure obligation','module':last,
+               'elements':sorted(f.hard_checks.ELEMENTS[kind]) or ['界面分区']}
+              for name,kind in f.hard_checks.required_figures(s).items()],
+   'measures':[{'id':'交接','module':last,'requirement':reqs[-1]['id'],'basis':'synthetic interface',
+                'completion':'handover inspected'}],
+   'schedule':{'tasks':[{'id':'A','name':'场地交接','unit':'段','module':last,'crews':['crew'],
+        'equipment':[],'materials':[],'equipment_basis':'人工交接','materials_basis':'现场核查',
+        'ready':{},'after':[],'quantity':1,'rate':1,'start':1,'finish':1,'windows':[[1,8,9]],'basis':'fixture sample'}]}}
  f.save_state(state_path,s)
  return state_path,s
 
@@ -122,6 +133,8 @@ def module_files(m):
   if requirements[rid]['scoring']:
    conditions.append({'requirement_id':rid,'criterion_quote':requirements[rid]['scope'],'response_quote':q1,'evidence':[evidence(SOURCE)],'targeted':True,'technical_depth':True,'project_basis':True,'substantive_response':True,'status':'satisfied','conclusion':'synthetic scoring response'})
  if conditions:data['scoring_review']={'conditions':conditions,'conclusion':'synthetic scoring response'}
+ if mid==s['plan']['modules'][-1]['id']:
+  data['measures']={'交接':{k:{'loc':'L1','quote':'材料报审及设备进场完成后','finding':'synthetic module evidence'} for k in f.hard_checks.ASPECTS}}
  write(rv,data)
  return src,rv,[q1,q2]
 for m in s['plan']['modules']:
@@ -141,6 +154,10 @@ def compose(path,ids):
  d.save(path)
 SNAP40=BASE/'stage-40.docx';SNAP75=BASE/'stage-75.docx';FINAL=BASE/'final.docx'
 compose(SNAP40,s['plan']['checkpoint_module_ids']['40']);compose(SNAP75,s['plan']['checkpoint_module_ids']['75']);compose(FINAL,f._ids(s))
+for path in (SNAP40,SNAP75):
+ review=f.hard_checks.pending_review()
+ review['bill_scan']='Checked all fixture paragraphs and table rows'
+ write(path.with_suffix('.hard.json'),{'document_sha256':f.sha256(path),'hard_checks':review})
 def checkpoint_report(stage,path,actual):
  return {'page_source':'microsoft_word','status':'MEASURED','stage_percent':stage,'document_sha256':f.sha256(path),'project_rule':{'target_body_pages':395,'page_tolerance':5,'front_matter_pages_excluded':1},'actual':{'word_body_pages':actual,'word_version':'synthetic-fixture'}}
 CP40=BASE/'cp40-fixture.json';CP75=BASE/'cp75-fixture.json'

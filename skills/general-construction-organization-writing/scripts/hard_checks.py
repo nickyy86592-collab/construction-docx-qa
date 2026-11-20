@@ -20,7 +20,8 @@ CHECK_ERRORS=(OSError, ValueError, TypeError, KeyError, IndexError, AttributeErr
 
 
 def detail(s):
-    return isinstance(s,str) and len(s.strip())>=2 and s.strip() not in BAD
+    return (isinstance(s,str) and len(s.strip())>=2 and s.strip() not in BAD
+            and not re.fullmatch(r"(?:本项|已经|已|均已)?(?:复核|核对|检查)(?:完成|通过|无误)?[。！!]?",s.strip()))
 
 
 def template():
@@ -46,7 +47,7 @@ def required_figures(state):
     return kinds
 
 
-def plan_errors(state):
+def plan_errors(state, base=None):
     try:
         spec=state["plan"]["hard_checks"]
         req={r["id"]:r for r in state["plan"]["requirements"]}
@@ -55,6 +56,11 @@ def plan_errors(state):
         bills={s["id"] for s in state["startup"]["sources"] if s["role"] in ("bill","boq")}
         if bills!={b["source"] for b in spec["bills"]} or any(not b["tables"] for b in spec["bills"]):
             errors.append("清单：有效原件/表尚未对应；失效版从资料盘点中注明替代关系")
+        if base is not None:
+            try:
+                boq.index(state,base)
+            except CHECK_ERRORS as exc:
+                errors.append("清单：编前原件定位失败 "+str(exc))
         required=required_figures(state)
         figures=spec["figures"]
         if len(figures)!=len({f["name"] for f in figures}) or set(required)-{f["name"] for f in figures}:
@@ -93,11 +99,45 @@ def document_rows(blocks):
     return rows
 
 
+def table_claim_errors(blocks,claims,tables):
+    """按实际表头独立读取Word原生表内明示字段，即使复核人漏填fields也核对。"""
+    by_loc={}
+    for claim in claims:
+        by_loc.setdefault(claim["loc"],[]).append(claim)
+    errors=[]
+    for block in blocks:
+        tab=block["table_index"]
+        if tab is None:
+            continue
+        columns={}
+        for n,cells in enumerate(block["table_content"],1):
+            fields={i:k for i,v in enumerate(cells) for k,aliases in boq.HEADERS.items() if boq.clean(v) in aliases}
+            if "code" in fields.values() or ("name" in fields.values() and "quantity" in fields.values()):
+                columns=fields
+                continue
+            loc=f"T{tab}R{n}"
+            if not columns or len(by_loc.get(loc,[]))!=1:
+                continue
+            c=by_loc[loc][0]
+            row=tables.get((c["source"],c["sheet"],c["trade"],c["title"]),{}).get(c["row"])
+            if row is None:
+                continue
+            for i,k in columns.items():
+                if i>=len(cells) or not cells[i].strip():
+                    continue
+                if not boq.same(k,cells[i],row[k]):
+                    errors.append(f"Word {loc} 第{i+1}列 / {c['source']} {c['trade']} {c['sheet']} 第{c['row']}行 {boq.LABEL[k]} Word={cells[i]} 原行={row[k]}")
+    return errors
+
+
 def measure_errors(specs,reviews,locations,source_lookup):
     errors=[]
     for spec in specs:
         mid=spec["id"]
         record=reviews.get(mid,{})
+        if not isinstance(record,dict):
+            errors.append(f"措施 {mid}：复核须逐项定位实际正文证据")
+            continue
         for aspect in ASPECTS:
             e=record.get(aspect,{})
             quote=e.get("quote")
@@ -110,6 +150,12 @@ def measure_errors(specs,reviews,locations,source_lookup):
                 numbers=set(re.findall(r"\d+(?:\.\d+)?",quote))
                 supported=set()
                 for ref in refs:
+                    if "operation" in ref:
+                        value=calculated_value(ref,source_lookup)
+                        if value is not None:
+                            from decimal import Decimal
+                            supported.update(n for n in numbers if Decimal(n)==value)
+                        continue
                     src=source_lookup(ref["source"],ref["unit_id"])
                     if detail(ref["quote"]) and ref["quote"] in src:
                         supported.update(re.findall(r"\d+(?:\.\d+)?",ref["quote"]))
@@ -121,6 +167,29 @@ def measure_errors(specs,reviews,locations,source_lookup):
                 if not detail(e.get("quote")) or e["quote"] not in locations.get(e.get("loc"),""):
                     errors.append(f"措施 {mid}：缺{key}的实际正文证据")
     return errors
+
+
+def calculated_value(ref,lookup):
+    """从原件引文重新计算，禁止执行任意表达式。复合公式用嵌套输入。"""
+    from decimal import Decimal, DecimalException
+    import operator
+    operations={"add":operator.add,"subtract":operator.sub,"multiply":operator.mul,"divide":operator.truediv}
+    try:
+        if "operation" not in ref:
+            raw=str(ref["value"])
+            quote=ref["quote"]
+            if (not detail(quote) or quote not in lookup(ref["source"],ref["unit_id"])
+                    or raw not in re.findall(r"-?\d+(?:\.\d+)?",quote)):
+                return None
+            return Decimal(raw)
+        if not detail(ref.get("basis")) or not ref.get("unit"):
+            return None
+        left,right=[calculated_value(x,lookup) for x in ref["inputs"]]
+        if left is None or right is None:
+            return None
+        return operations[ref["operation"]](left,right)
+    except (KeyError,ValueError,DecimalException):
+        return None
 
 
 def source_lookup(state,base):
@@ -200,7 +269,9 @@ def audit(state,base,document,review,common,word,selected=None):
         versions={s["id"]:s["sha256"] for s in state["startup"]["sources"]}
         if not detail(rec["bill_scan"]):
             errors.append("清单：缺逐段、逐表行与图注反查结论")
-        errors+=boq.check(rows,rec["bills"],boq.index(state,base),versions,rec.get("non_bill",[]))
+        tables=boq.index(state,base)
+        errors+=boq.check(rows,rec["bills"],tables,versions,rec.get("non_bill",[]))
+        errors+=table_claim_errors(blocks,rec["bills"],tables)
         def included(items):
             return [x for x in items if selected is None or x["module"] in selected]
         figures=included(spec["figures"])
@@ -229,8 +300,15 @@ def audit(state,base,document,review,common,word,selected=None):
 def schedule_errors_for_task(task,views,locations):
     ref=views.get(task["id"],{})
     p,r=ref.get("body",""),ref.get("table","")
-    if (not p.startswith("P") or task["name"] not in locations.get(p,"") or schedule.interval(task) not in locations.get(p,"")
-            or not r.startswith("T") or schedule.table_row(task)!=locations.get(r,"").split(" | ")):
+    expected=schedule.table_row(task)
+    cells=locations.get(r,"").split(" | ")
+    cols=ref.get("columns",list(range(1,len(expected)+1)))
+    if (not isinstance(cols,list) or len(cols)!=len(expected) or any(type(i) is not int or not 1<=i<=len(cells) for i in cols)
+            or len(set(cols))!=len(cols)):
+        return ["计划 "+task["id"]+"：计划表核心列定位失败"]
+    paragraph=locations.get(p,"")
+    if (not p.startswith("P") or task["name"] not in paragraph or schedule.interval(task) not in paragraph
+            or not r.startswith("T") or expected!=[cells[i-1] for i in cols]):
         return ["计划 "+task["id"]+"：正文或计划表与唯一计划源不一致"]
     return []
 

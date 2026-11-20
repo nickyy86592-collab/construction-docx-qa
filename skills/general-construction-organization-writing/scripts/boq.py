@@ -54,7 +54,18 @@ def index(state, base):
                     copy.get("correspondence_reviewed") is not True or not copy.get("conclusion")):
                 raise ValueError("原件需逐行对应核验的表格转换件："+str(source_path))
             source_path=resolve(copy["path"],base)
+        registered={t["sheet"] for t in spec["tables"]}
+        excluded=spec.get("excluded_sheets",{})
         for sheet, rows in worksheets(source_path):
+            titles=[clean(sheet)]+[clean(c) for row in rows for c in row if isinstance(c,str) and "分部分项" in c]
+            if (any("分部分项工程量清单计价表" in title for title in titles) and sheet not in registered
+                    and len(str(excluded.get(sheet,"")).strip())<6):
+                raise ValueError(f"{s['id']} / {sheet} 有效清单未登记，须查实版本及专业")
+            variants=[t for t in spec["tables"] if t["sheet"]==sheet]
+            if len(variants)>1:
+                ranges=sorted(tuple(t.get("row_range",(1,len(rows)))) for t in variants)
+                if any(a[1]>=b[0] for a,b in zip(ranges,ranges[1:])):
+                    raise ValueError(sheet+" 同表多专业须按原表界线分段定位")
             for tab in spec["tables"]:
                 if sheet != tab["sheet"]:
                     continue
@@ -73,13 +84,18 @@ def index(state, base):
                     raise ValueError("有效表重复登记："+sheet)
                 records=result[key]={}
                 columns={}
+                lower,upper=tab.get("row_range",(1,len(rows)))
+                if not 1<=lower<=upper<=len(rows):
+                    raise ValueError(sheet+" 专业分段行范围无效")
                 for n,row in enumerate(rows,1):
                     vals=[clean(v) for v in row]
                     hdr={k:next((i for i,v in enumerate(vals) if v in names),None) for k,names in HEADERS.items()}
-                    if all(v is not None for v in hdr.values()):
+                    if hdr["name"] is not None and sum(v is not None for v in hdr.values())>=2:
                         columns=hdr
-                    elif columns and vals[columns["item"]].isdigit() and vals[columns["code"]]:
-                        records[n]={k:vals[col] for k,col in columns.items()}
+                    elif columns and lower<=n<=upper:
+                        fields={k:(vals[col] if col is not None and col<len(vals) else "") for k,col in columns.items()}
+                        if fields["name"] and (fields["code"] or fields["quantity"] or fields["item"].isdigit()):
+                            records[n]=fields
                 if not records:
                     raise ValueError(f"{sheet} 缺可定位表头或原行")
         for tab in spec["tables"]:

@@ -35,6 +35,7 @@ jobs:
           cp audit/common/prepare_python.ps1 bundle/
           python -m pip download --only-binary=:all: --no-deps -d bundle/wheels xlrd openpyxl et-xmlfile pypdf
           if [[ "$probe" == true ]]; then
+            cp skills/general-construction-organization-writing/tests/runner_release_probe.py bundle/
             python -m pip install python-docx Pillow openpyxl xlrd pypdf pymupdf PyYAML
             python -m unittest discover -s skills/general-construction-organization-writing/tests
             python skills/general-construction-organization-writing/tests/test_hard_checks.py --runner-fixture bundle/input
@@ -80,24 +81,7 @@ jobs:
         if: needs.prepare.outputs.probe == 'true'
         run: |
           Set-Location $env:RELEASE_ROOT
-          $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-          @'
-          from pathlib import Path
-          import sys,json
-          sys.path.insert(0,str(Path('scripts').resolve()))
-          import hard_checks
-          p=Path('input/project')
-          actual=hard_checks.inspect_word(p/'design.docx')
-          print('WORD_NATIVE',actual)
-          review=json.loads((p/'review.json').read_text('utf-8'))
-          for caption,pages in actual['figure_pages'].items():
-              name=caption.split(' ',1)[1]
-              assert len(pages)==1,(caption,pages)
-              review['hard_checks']['figures'][name]['page']=pages[0]
-          (p/'review.json').write_text(json.dumps(review,ensure_ascii=False),'utf-8')
-          Path('input/reports/delivery.json').write_text(json.dumps(actual,ensure_ascii=False),'utf-8')
-          '@ | Set-Content -Encoding utf8 inspect-release.py
-          & $env:AUDIT_PYTHON inspect-release.py
+          & $env:AUDIT_PYTHON runner_release_probe.py pages
           exit $LASTEXITCODE
       - name: Run formal delivery and publish
         id: publish
@@ -117,16 +101,5 @@ jobs:
         if: always() && needs.prepare.outputs.probe == 'true'
         run: |
           Set-Location $env:RELEASE_ROOT
-          $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-          @'
-          import json,pathlib
-          p=pathlib.Path('input/project')
-          r=json.loads((p/'流程交付结果.json').read_text('utf-8'))
-          print(json.dumps(r,ensure_ascii=False))
-          assert r['status']=='FAIL' and r['formal_release'] is False and r['task_complete'] is False
-          assert r['failures']==['D1 甲班 被 A、B 重复占用'],r['failures']
-          assert not pathlib.Path('formal/design.docx').exists()
-          print('EXPECTED_CREW_CONFLICT_ONLY; formal_release=false; PUBLISHED_FILES=0')
-          '@ | Set-Content -Encoding utf8 inspect-release.py
-          & $env:AUDIT_PYTHON inspect-release.py
+          & $env:AUDIT_PYTHON runner_release_probe.py verify
           exit $LASTEXITCODE
