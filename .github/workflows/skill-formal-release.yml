@@ -96,7 +96,8 @@ jobs:
               review['hard_checks']['figures'][name]['page']=pages[0]
           (p/'review.json').write_text(json.dumps(review,ensure_ascii=False),'utf-8')
           Path('input/reports/delivery.json').write_text(json.dumps(actual,ensure_ascii=False),'utf-8')
-          '@ | & $env:AUDIT_PYTHON -
+          '@ | Set-Content -Encoding utf8 inspect-release.py
+          & $env:AUDIT_PYTHON inspect-release.py
           exit $LASTEXITCODE
       - name: Run formal delivery and publish
         id: publish
@@ -126,5 +127,6 @@ jobs:
           assert r['failures']==['D1 甲班 被 A、B 重复占用'],r['failures']
           assert not pathlib.Path('formal/design.docx').exists()
           print('EXPECTED_CREW_CONFLICT_ONLY; formal_release=false; PUBLISHED_FILES=0')
-          '@ | & $env:AUDIT_PYTHON -
+          '@ | Set-Content -Encoding utf8 inspect-release.py
+          & $env:AUDIT_PYTHON inspect-release.py
           exit $LASTEXITCODE

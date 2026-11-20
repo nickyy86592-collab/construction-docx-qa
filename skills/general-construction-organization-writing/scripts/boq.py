@@ -104,6 +104,9 @@ def same(field, value, actual):
 
 def check(locations, claims, tables, versions, exclusions=()):
     errors, covered = [], {}
+    names={r["name"] for table in tables.values() for r in table.values() if r["name"]}
+    trades={k[2] for k in tables}
+    bill_words=re.compile(r"(?:清单|计价表)(?:中|内|所列|列明|载明|列项|项目|摘录|引用|对应|[：:])")
     for c in claims:
         loc, quote = c["loc"], c["quote"]
         key = (c["source"],c["sheet"],c["trade"],c["title"])
@@ -119,6 +122,19 @@ def check(locations, claims, tables, versions, exclusions=()):
         if not fields or fields.keys()-HEADERS.keys():
             errors.append(prefix+" 缺实际明示字段或字段名无效")
             continue
+        for name in names:
+            if name in quote and name!=row["name"] and name not in row["feature"] and row["name"].find(name)<0:
+                errors.append(prefix+f" 项目名称 Word={name} 原行={row['name']}")
+        if row["name"] in quote and fields.get("name")!=row["name"]:
+            errors.append(prefix+" 项目名称已明示但未逐字段登记："+row["name"])
+        for trade in trades:
+            if trade != c["trade"] and trade in quote:
+                errors.append(prefix+" Word所引专业为"+trade)
+        for field,pattern in (("name",r"项目名称[：:]([^，。；|]+)"),("feature",r"项目特征(?:描述)?[：:]([^；。|]+)"),
+                              ("unit",r"(?:计量)?单位[：:]([^，。；|\s]+)"),("quantity",r"(?:工程量|数量)[：:]?\s*(\d+(?:\.\d+)?)")):
+            for m in re.finditer(pattern,quote):
+                if not same(field,m[1],row[field]) or not same(field,m[1],fields.get(field,"")):
+                    errors.append(prefix+f" {LABEL[field]} Word={m[1]} 原行={row[field]}")
         found = list(MARK.finditer(quote))
         for m in found:
             token=clean(m.group())
@@ -148,6 +164,6 @@ def check(locations, claims, tables, versions, exclusions=()):
         rest=original
         for quote in covered.get(loc,[]):
             rest=rest.replace(quote," ",1)
-        if MARK.search(rest):
+        if MARK.search(rest) or bill_words.search(rest) or ("清单" in rest and any(n in rest for n in names)):
             errors.append(f"Word {loc}「{rest.strip()}」 ↔ 清单原行未定位／漏登明示项号或编码")
     return errors

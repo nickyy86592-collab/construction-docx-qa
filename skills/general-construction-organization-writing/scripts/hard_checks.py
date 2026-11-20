@@ -1,5 +1,4 @@
 """r21 四项硬审。自动检查可复算事实，专业判断绑定实际成稿位置和图像。"""
-from collections import Counter
 from hashlib import sha256
 from pathlib import Path
 import re
@@ -8,7 +7,7 @@ from xml.etree import ElementTree as ET
 import posixpath
 import boq
 import schedule
-from source_coverage import digest, fresh, inventory
+from source_coverage import inventory
 from visual_policy import base_names
 
 ASPECTS=("工序","触发","做法","标准","异常")
@@ -159,6 +158,8 @@ def figure_errors(specs,reviews,blocks,common,word,model,document):
             errors.append(f"图件 {caption} 第{page}页：图种、同页图像、指纹或Word实排页不符")
         for element in f["elements"]:
             e=review.get("elements",{}).get(element,{})
+            if element=="临设" and e.get("status")=="not_applicable" and detail(f.get("no_facilities_basis")) and e.get("finding")==f["no_facilities_basis"]:
+                continue
             if not detail(e.get("position")) or not detail(e.get("finding")) or e.get("status")!="verified":
                 errors.append(f"图件 {caption} 第{page}页/{element}：缺图上位置、实见内容或必验要素")
         if f["kind"] in ("network","gantt") and not schedule.calculate(model):
@@ -211,6 +212,13 @@ def audit(state,base,document,review,common,word,selected=None):
         errors+=schedule.calculate(model)
         for t in included(model["tasks"]):
             errors+=schedule_errors_for_task(t,rec["schedule"],rows)
+            for loc,line in rows.items():
+                for phrase in re.split(r"[。；;\n]",line):
+                    if t["name"] not in phrase:
+                        continue
+                    for pair in re.finditer(r"D(\d+)\s*[—–~～至-]\s*D?(\d+)",phrase):
+                        if sum(x["name"] in phrase for x in model["tasks"])==1 and (int(pair[1]),int(pair[2]))!=(t["start"],t["finish"]):
+                            errors.append(f"计划 {t['id']}/{loc} 明示时段{pair[0]}与计划源不一致")
         if selected is None and spec["gaps"]:
             errors+=["未关闭的必验资料："+g["element"] for g in spec["gaps"] if g.get("required",True)]
         return list(dict.fromkeys(errors))

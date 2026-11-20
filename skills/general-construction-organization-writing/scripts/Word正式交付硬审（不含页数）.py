@@ -1908,31 +1908,37 @@ def _placeholder_has_visible_frame(doc, placeholder: str) -> bool:
 
 def figure_pages(doc, records):
     """只记紧邻题注的真实图片所在总页，图题跨页时返回空数组。"""
-    pages = {}
+    from bisect import bisect_right
+    # Physical page starts avoid adjusted numbering and Range.Information COM dispatch ambiguity.
+    starts=[int(doc.GoTo(What=WD_GOTO_PAGE,Which=WD_GOTO_ABSOLUTE,Count=n).Start)
+            for n in range(1,int(doc.ComputeStatistics(WD_STATISTIC_PAGES))+1)]
+    shapes=[]
+    for collection,attr in ((doc.InlineShapes,"Range"),(doc.Shapes,"Anchor")):
+        for n in range(1,int(collection.Count)+1):
+            rng=getattr(collection.Item(n),attr)
+            shapes.append((int(rng.Start),int(rng.End)))
+    pages={}
     for rec in records:
-        if not _caption_match(rec["text"], "图"):
+        if not _caption_match(rec["text"],"图"):
             continue
-        hits = []
-        for offset in (0, -1, 1, -2, 2):
-            idx = rec["index"] + offset
-            if not 1 <= idx <= doc.Paragraphs.Count:
+        begin,end=rec["start"],rec["end"]
+        candidates=[]
+        for left,right in shapes:
+            gap=max(begin-right,left-end,0)
+            if gap>8:
                 continue
-            if abs(offset) == 2 and clean_text(doc.Paragraphs(rec["index"]+offset//2).Range.Text):
+            lo,hi=(right,begin) if right<=begin else (end,left) if end<=left else (begin,begin)
+            if lo<hi and re.search(r"[^\s\x00-\x1f]",doc.Range(lo,hi).Text or ""):
                 continue
-            rng = doc.Paragraphs(idx).Range
-            if offset and clean_text(rng.Text).replace("\x01","").replace("\x08","").strip():
-                continue
-            for shape in rng.InlineShapes:
-                hits.append(page_of_range(shape.Range))
-            try:
-                floating = rng.ShapeRange
-            except Exception:
-                floating = []
-            for shape in floating:
-                hits.append(page_of_range(shape.Anchor))
-            if hits:
-                break
-        pages.setdefault(rec["text"], []).extend(p for p in hits if p == rec["page"])
+            candidates.append((0 if left<end else 1,gap,left))
+        hits=[]
+        if candidates:
+            rank,dist,pos=min(candidates)
+            hits=[bisect_right(starts,x) for side,gap,x in candidates if (side,gap)==(rank,dist)
+                  and bisect_right(starts,x)==bisect_right(starts,begin)]
+        if not hits:
+            print("WORD_FIGURE_LOCATION_UNRESOLVED",repr(rec["text"]),begin,end,shapes,starts)
+        pages.setdefault(rec["text"],[]).extend(hits)
     return pages
 
 
