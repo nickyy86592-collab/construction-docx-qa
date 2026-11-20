@@ -1,0 +1,130 @@
+name: Construction skill formal release
+on:
+  push:
+    branches: [main, r21-acceptance, 'r21-acceptance-*']
+    paths:
+      - 'input/release/**'
+      - '.github/workflows/skill-formal-release.yml'
+      - 'skills/general-construction-organization-writing/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.stage.outputs.ready }}
+      probe: ${{ steps.stage.outputs.probe }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: stage
+        shell: bash
+        run: |
+          set -eu
+          probe=false
+          if [[ "$GITHUB_REF_NAME" == r21-acceptance* ]]; then probe=true; fi
+          echo "probe=$probe" >> "$GITHUB_OUTPUT"
+          if [[ "$probe" != true && ! -f input/release/project/design.docx ]]; then
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
+          mkdir -p bundle
+          cp -r skills/general-construction-organization-writing/scripts bundle/
+          cp audit/common/prepare_python.ps1 bundle/
+          python -m pip download --only-binary=:all: --no-deps -d bundle/wheels xlrd openpyxl et-xmlfile pypdf
+          if [[ "$probe" == true ]]; then
+            python -m pip install python-docx Pillow openpyxl xlrd pypdf pymupdf PyYAML
+            python -m unittest discover -s skills/general-construction-organization-writing/tests
+            python skills/general-construction-organization-writing/tests/test_hard_checks.py --runner-fixture bundle/input
+          else
+            cp -r input/release bundle/input
+          fi
+      - uses: actions/upload-artifact@v4
+        if: steps.stage.outputs.ready == 'true'
+        with:
+          name: release-input-${{ github.run_id }}
+          path: bundle/
+          retention-days: 14
+  release:
+    needs: prepare
+    if: needs.prepare.outputs.ready == 'true'
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: '1'
+      GH_TOKEN: ${{ github.token }}
+      PROBE: ${{ needs.prepare.outputs.probe }}
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Receive audited inputs
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=Join-Path $env:GITHUB_WORKSPACE "release-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          New-Item -ItemType Directory $root | Out-Null
+          "RELEASE_ROOT=$root" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          Set-Location $root
+          $headers=@{Authorization="Bearer $env:GH_TOKEN";Accept='application/vnd.github+json'}
+          $artifacts=Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/artifacts"
+          $a=$artifacts.artifacts | Where-Object {$_.name -eq "release-input-$env:GITHUB_RUN_ID"}
+          Invoke-WebRequest -UseBasicParsing -Headers $headers -Uri $a.archive_download_url -OutFile input.zip
+          if ($a.digest -ne ('sha256:'+(Get-FileHash input.zip).Hash.ToLower())) { throw 'Input digest mismatch' }
+          Expand-Archive input.zip -DestinationPath .
+          & .\prepare_python.ps1
+          & $env:AUDIT_PYTHON -c "import pathlib,zipfile; [zipfile.ZipFile(w).extractall('scripts') for w in pathlib.Path('wheels').glob('*.whl')]"
+          exit $LASTEXITCODE
+      - name: Measure actual Word figure pages for the regression fixture
+        if: needs.prepare.outputs.probe == 'true'
+        run: |
+          Set-Location $env:RELEASE_ROOT
+          $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+          @'
+          from pathlib import Path
+          import sys,json
+          sys.path.insert(0,str(Path('scripts').resolve()))
+          import hard_checks
+          p=Path('input/project')
+          actual=hard_checks.inspect_word(p/'design.docx')
+          print('WORD_NATIVE',actual)
+          review=json.loads((p/'review.json').read_text('utf-8'))
+          for caption,pages in actual['figure_pages'].items():
+              name=caption.split(' ',1)[1]
+              assert len(pages)==1,(caption,pages)
+              review['hard_checks']['figures'][name]['page']=pages[0]
+          (p/'review.json').write_text(json.dumps(review,ensure_ascii=False),'utf-8')
+          Path('input/reports/delivery.json').write_text(json.dumps(actual,ensure_ascii=False),'utf-8')
+          '@ | & $env:AUDIT_PYTHON -
+          exit $LASTEXITCODE
+      - name: Run formal delivery and publish
+        id: publish
+        run: |
+          Set-Location $env:RELEASE_ROOT
+          & $env:AUDIT_PYTHON scripts/release_docx.py --project input/project --reports input/reports --destination formal/design.docx
+          exit $LASTEXITCODE
+      - name: Upload formally released Word
+        if: success() && steps.publish.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: formal-docx-${{ github.run_id }}
+          path: release-${{ github.run_id }}-${{ github.run_attempt }}/formal/design.docx
+          if-no-files-found: error
+          retention-days: 14
+      - name: Verify expected refusal at the publishing boundary
+        if: always() && needs.prepare.outputs.probe == 'true'
+        run: |
+          Set-Location $env:RELEASE_ROOT
+          $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+          @'
+          import json,pathlib
+          p=pathlib.Path('input/project')
+          r=json.loads((p/'流程交付结果.json').read_text('utf-8'))
+          print(json.dumps(r,ensure_ascii=False))
+          assert r['status']=='FAIL' and r['formal_release'] is False and r['task_complete'] is False
+          assert r['failures']==['D1 甲班 被 A、B 重复占用'],r['failures']
+          assert not pathlib.Path('formal/design.docx').exists()
+          print('EXPECTED_CREW_CONFLICT_ONLY; formal_release=false; PUBLISHED_FILES=0')
+          '@ | & $env:AUDIT_PYTHON -
+          exit $LASTEXITCODE

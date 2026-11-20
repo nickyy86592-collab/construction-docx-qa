@@ -66,7 +66,7 @@ WD_OUTLINE_BODY_TEXT = 10
 WD_MAIN_TEXT_STORY = 1
 WD_TEXT_RECTANGLE = 0
 WD_SHAPE_RECTANGLE = 1
-AUDIT_VERSION = "1.16.0"
+AUDIT_VERSION = "1.17.0"
 HEADING_ALIGNMENT_DEFAULT = {'1': 'center', '2': 'center', '3': 'left'}
 WORD_HEADING_ALIGNMENT_CHECK = "正文标题对齐_Word"
 BODY_CHART_COUNT_CHECK = "正文图表数量"
@@ -1906,6 +1906,36 @@ def _placeholder_has_visible_frame(doc, placeholder: str) -> bool:
     return False
 
 
+def figure_pages(doc, records):
+    """只记紧邻题注的真实图片所在总页，图题跨页时返回空数组。"""
+    pages = {}
+    for rec in records:
+        if not _caption_match(rec["text"], "图"):
+            continue
+        hits = []
+        for offset in (0, -1, 1, -2, 2):
+            idx = rec["index"] + offset
+            if not 1 <= idx <= doc.Paragraphs.Count:
+                continue
+            if abs(offset) == 2 and clean_text(doc.Paragraphs(rec["index"]+offset//2).Range.Text):
+                continue
+            rng = doc.Paragraphs(idx).Range
+            if offset and clean_text(rng.Text).replace("\x01","").replace("\x08","").strip():
+                continue
+            for shape in rng.InlineShapes:
+                hits.append(page_of_range(shape.Range))
+            try:
+                floating = rng.ShapeRange
+            except Exception:
+                floating = []
+            for shape in floating:
+                hits.append(page_of_range(shape.Anchor))
+            if hits:
+                break
+        pages.setdefault(rec["text"], []).extend(p for p in hits if p == rec["page"])
+    return pages
+
+
 def check_real_photo_slots(doc, rules: Dict[str, Any]) -> List[CheckResult]:
     """草稿允许标注真实照片占位；最终版必须有真实照片的来源记录并在图注旁确有图片。"""
     raw = rules.get("required_real_photo_slots")
@@ -2146,6 +2176,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
             "layout_engine": "Microsoft Word",
             "document": str(docx_path.resolve()),
             "document_sha256": sha256_file(docx_path),
+            "figure_pages": figure_pages(doc, records),
             "audited_at": started,
             "delivery_status": overall,
             "hard_failure_count": len(hard_failures),
