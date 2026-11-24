@@ -10,7 +10,7 @@ COMMON=Path(__file__).resolve().parents[1]
 import tempfile,shutil
 _temporary=tempfile.TemporaryDirectory()
 ROOT=Path(_temporary.name)/'skill';(ROOT/'scripts').mkdir(parents=True)
-for name in ('Word正式交付硬审（不含页数）.py','编制流程门禁.py','评分响应核验.py','visual_policy.py','source_coverage.py','project_response.py'):
+for name in ('Word正式交付硬审（不含页数）.py','编制流程门禁.py','评分响应核验.py','visual_policy.py','source_coverage.py','project_response.py','boq.py','schedule.py','hard_checks.py','bid_requirements.py','submission_identity.py'):
     shutil.copy2(COMMON/name,ROOT/'scripts'/name)
 active_pages=list((COMMON.parents[1]/'input/project').glob('*页数硬审*.py'))
 assert len(active_pages)==1,'One active project page script is required'
@@ -224,6 +224,7 @@ expect('伪改静态报告仍不能让占位冒充正式照片',f.cmd_delivery(a
 source.write_text(source.read_text()+' version changed');expect('来源文件改变使旧内容核验失效',bool(f.validate_content_review(passdoc,rp)[0]))
 # No-page deployment must still block absent startup.
 np=OUT/'no-page';np.mkdir(exist_ok=True);(np/'编制流程门禁.py').write_text((ROOT/'scripts/编制流程门禁.py').read_text());shutil.copy2(ROOT/'scripts/visual_policy.py',np/'visual_policy.py');shutil.copy2(ROOT/'scripts/source_coverage.py',np/'source_coverage.py');shutil.copy2(ROOT/'scripts/project_response.py',np/'project_response.py')
+for extra in ('boq.py','schedule.py','hard_checks.py','bid_requirements.py','submission_identity.py'):shutil.copy2(ROOT/'scripts'/extra,np/extra)
 rc=subprocess.run([sys.executable,str(np/'编制流程门禁.py'),'--state',str(np/'state.json'),'init'],capture_output=True);expect('无页数脚本仍初始化启动门禁',rc.returncode==2 and (np/'state.json').exists())
 rc=subprocess.run([sys.executable,str(np/'编制流程门禁.py'),'--state',str(np/'state.json'),'preflight'],capture_output=True);expect('无页数脚本不能绕过启动质询',rc.returncode==2)
 print(json.dumps({'passed':len(results),'tests':results,'limits':['Synthetic fixtures only; Windows Word not executed.']},ensure_ascii=False,indent=2))

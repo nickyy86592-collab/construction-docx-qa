@@ -78,7 +78,7 @@ class SourceCoverageTests(unittest.TestCase):
         self.raw = self.base / 'originals'
         self.raw.mkdir()
         self.tender = self.raw / '招标原文.txt'
-        self.criterion = '施工措施应针对现场限制并具有可操作性'
+        self.criterion = '施工措施应针对现场限制并具有可操作性，技术项满分10分'
         self.tender.write_text(self.criterion + '\n覆土前完成第三方测绘并提交记录', encoding='utf-8')
         self.boq = self.raw / '工程量清单.xlsx'
         wb = Workbook()
@@ -353,6 +353,17 @@ class SourceCoverageTests(unittest.TestCase):
             'keywords':[{'term':t, 'requirement':next(r['id'] for r in self.req if t in r['scope'])} for t in words],
             'headings':{'2':words[:15], '3':words},
             'priorities':[{'chapters':[c['chapter']], 'basis':'synthetic scope'} for c in plan['chapter_plan']]}
+        plan['hard_checks'] = {'bills':[{'source':'B','sha256':sc.file_hash(self.boq),
+            'tables':[{'sheet':'工程量','title':'工程量','trade':'标线施工','trade_cell':[2,1]}]}],
+            'figures':[{'name':n,'kind':k,'module':'M','basis':'测试项目图件规划',
+                'elements':list(flow.hard_checks.ELEMENTS[k]) or ['作业区']}
+                for n,k in flow.hard_checks.required_figures(self.state).items()],
+            'measures':[{'id':'标线','module':'M','requirement':self.req[0]['id'],'basis':'试件招标条件','completion':'实测标线厚度'}],
+            'schedule':{'tasks':[{'id':'A','module':'M'}]},'gaps':[]}
+        from bid_fixture import project_profile,fixture_capacity
+        ref=self.req[0]['source_refs'][0]
+        self.state['plan']['bid_requirements']=project_profile(ref,"M",self.req[0]["id"],[self.req[0]["id"]],["Q1"],["施工班"])
+        self.state['plan']['hard_checks']['schedule']['tasks'][0].update(crews=["施工班"],equipment=[],rate=1,unit="项",capacity=fixture_capacity(ref,["施工班"]),productivity_basis="试件工作面单班操作")
         self.state['phase']='PLANNING' 
         self.state['gate']={'reason':'未完成篇幅规划，禁止开始正式正文'}
         path=write(self.base/'no-page-state.json',self.state)

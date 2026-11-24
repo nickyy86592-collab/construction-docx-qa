@@ -66,7 +66,7 @@ WD_OUTLINE_BODY_TEXT = 10
 WD_MAIN_TEXT_STORY = 1
 WD_TEXT_RECTANGLE = 0
 WD_SHAPE_RECTANGLE = 1
-AUDIT_VERSION = "1.16.0"
+AUDIT_VERSION = "1.18.0"
 HEADING_ALIGNMENT_DEFAULT = {'1': 'center', '2': 'center', '3': 'left'}
 WORD_HEADING_ALIGNMENT_CHECK = "正文标题对齐_Word"
 BODY_CHART_COUNT_CHECK = "正文图表数量"
@@ -194,7 +194,7 @@ def effective_font_settings(rules):
     scope = rules.get("font_body_scope", "text" if "body" in prompt else "all")
     if scope not in ("text", "all"):
         raise AuditError("font_body_scope须为text（普通正文）或all")
-    if baseline is None and not prompt:
+    if baseline is None and not prompt and not rules.get("tender_font_sizes"):
         return {"font_rules": None, "font_body_scope": scope}
     if baseline is not None and (not isinstance(baseline, dict) or set(baseline) - FONT_SCOPES):
         raise AuditError("font_rules须按正文、标题、表格或题注配置")
@@ -203,7 +203,10 @@ def effective_font_settings(rules):
         if not isinstance(properties, dict) or set(properties) - FONT_FIELDS:
             raise AuditError(f"未知字体字段：{role}")
         resolved[role] = {field: value for field, value in properties.items() if value is not None}
-    for role, size in prompt.items():
+    locked=rules.get("tender_font_sizes",{})
+    if not isinstance(locked,dict) or set(locked)-FONT_SCOPES:
+        raise AuditError("强制字号范围无效")
+    for role, size in {**prompt,**locked}.items():
         resolved.setdefault(role, {})["size_pt"] = size
     for role, properties in resolved.items():
         if "size_pt" in properties:
@@ -1906,6 +1909,42 @@ def _placeholder_has_visible_frame(doc, placeholder: str) -> bool:
     return False
 
 
+def figure_pages(doc, records):
+    """只记紧邻题注的真实图片所在总页，图题跨页时返回空数组。"""
+    from bisect import bisect_right
+    # Physical page starts avoid adjusted numbering and Range.Information COM dispatch ambiguity.
+    starts=[int(doc.GoTo(What=WD_GOTO_PAGE,Which=WD_GOTO_ABSOLUTE,Count=n).Start)
+            for n in range(1,int(doc.ComputeStatistics(WD_STATISTIC_PAGES))+1)]
+    shapes=[]
+    for collection,attr in ((doc.InlineShapes,"Range"),(doc.Shapes,"Anchor")):
+        for n in range(1,int(collection.Count)+1):
+            rng=getattr(collection.Item(n),attr)
+            shapes.append((int(rng.Start),int(rng.End)))
+    pages={}
+    for rec in records:
+        if not _caption_match(rec["text"],"图"):
+            continue
+        begin,end=rec["start"],rec["end"]
+        candidates=[]
+        for left,right in shapes:
+            gap=max(begin-right,left-end,0)
+            if gap>8:
+                continue
+            lo,hi=(right,begin) if right<=begin else (end,left) if end<=left else (begin,begin)
+            if lo<hi and re.search(r"[^\s\x00-\x1f]",doc.Range(lo,hi).Text or ""):
+                continue
+            candidates.append((0 if left<end else 1,gap,left))
+        hits=[]
+        if candidates:
+            rank,dist,pos=min(candidates)
+            hits=[bisect_right(starts,x) for side,gap,x in candidates if (side,gap)==(rank,dist)
+                  and bisect_right(starts,x)==bisect_right(starts,begin)]
+        if not hits:
+            print("WORD_FIGURE_LOCATION_UNRESOLVED",repr(rec["text"]),begin,end,shapes,starts)
+        pages.setdefault(rec["text"],[]).extend(hits)
+    return pages
+
+
 def check_real_photo_slots(doc, rules: Dict[str, Any]) -> List[CheckResult]:
     """草稿允许标注真实照片占位；最终版必须有真实照片的来源记录并在图注旁确有图片。"""
     raw = rules.get("required_real_photo_slots")
@@ -2146,6 +2185,7 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
             "layout_engine": "Microsoft Word",
             "document": str(docx_path.resolve()),
             "document_sha256": sha256_file(docx_path),
+            "figure_pages": figure_pages(doc, records),
             "audited_at": started,
             "delivery_status": overall,
             "hard_failure_count": len(hard_failures),
@@ -2161,6 +2201,12 @@ def audit(docx_path: Path, rules_path: Optional[Path], report_path: Path, eviden
                 "高置信度‘上一页大留白 + 下一页靠近页首出现图片’判为 FAIL；仅有大留白但证据不足时为 WARN，需结合相邻页证据复核。",
             ],
         }
+        if rules.get("submission_format")=="pdf":
+            report_path.parent.mkdir(parents=True,exist_ok=True)
+            # Export from the same read-only, repaginated Microsoft Word document.
+            pdf_path=report_path.with_name(report_path.stem+"-submission.pdf")
+            doc.ExportAsFixedFormat(str(pdf_path.resolve()),17)
+            report["pdf"]={"name":pdf_path.name,"sha256":sha256_file(pdf_path)}
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         print_console(results, overall, report_path)
@@ -2726,7 +2772,7 @@ def portable_checks(document, rules):
             problems, counts = project_response.title_coverage(spec, actual)
             prompted = (rules.get('prompt_font_sizes') or {}).get('body')
             font = spec.get('font_budget')
-            if (prompted is None) != (font is None) or (prompted is not None and font_size_points(prompted) != font.get('size_pt')):
+            if (prompted is None) != (font is None) or (prompted is not None and font_size_points((rules.get('tender_font_sizes') or {}).get('body',prompted)) != font.get('size_pt')):
                 problems.append('提示词指定正文字号与编前容量测算不一致')
         except (TypeError, KeyError, ValueError, AttributeError) as exc:
             problems, counts = [str(exc)], {}

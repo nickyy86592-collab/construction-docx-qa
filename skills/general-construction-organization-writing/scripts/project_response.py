@@ -161,32 +161,44 @@ def font_errors(font, modules, base, fresh):
     return []
 
 
+def named_candidates(blocks,item,caption_match):
+    name,label=item["name"],item["kind"]
+    numbered = re.compile(r"^(?:第[一二三四五六七八九十百千万零〇两\d]+[章节篇部分]+[、：:.．\s]*|[（(]?[一二三四五六七八九十百千万零〇两\d]+(?:[.．]\d+)*[）)、.．\s]+)?"+re.escape(name)+r"$")
+    heads = [i for i,b in enumerate(blocks) if b["outline"] in (1,2,3) and numbered.fullmatch(b["text"].strip())]
+    captions = [i for i,b in enumerate(blocks) if b["table_index"] is None and b["outline"] not in (1,2,3)
+                and (m := caption_match(b["text"], label)) and m.group(2) == name]
+    if len(heads) != 1 or len(captions) != 1:
+        return [], "须有逐字同名的正文标题及唯一编号题注："+name
+    first, cap = heads[0], captions[0]
+    end = next((i for i in range(first+1,len(blocks)) if blocks[i]["outline"] in range(1,blocks[first]["outline"]+1)),len(blocks))
+    if not first < cap < end:
+        return [], "题注不在同名章节目内："+name
+    candidates = [blocks[cap]]
+    for step in (-1, 1):
+        i = cap + step
+        while first < i < end:
+            b = blocks[i]
+            if b["text"].strip() or b["table_index"] is not None or b["drawing_count"]:
+                candidates.append(b)
+                break
+            i += step
+    return candidates, ""
+
+
+def named_tables(blocks,item,caption_match):
+    candidates,_=named_candidates(blocks,item,caption_match)
+    return [b for b in candidates if b["table_index"] is not None]
+
+
 def named_errors(blocks, items, caption_match):
     errors = []
     for item in items:
         name, label = item["name"], item["kind"]
         # 序号不属于章节目名。招文锁定的名称（含标点与空格）逐字核对。
-        numbered = re.compile(r"^(?:第[一二三四五六七八九十百千万零〇两\d]+[章节篇部分]+[、：:.．\s]*|[（(]?[一二三四五六七八九十百千万零〇两\d]+(?:[.．]\d+)*[）)、.．\s]+)?"+re.escape(name)+r"$")
-        heads = [i for i,b in enumerate(blocks) if b["outline"] in (1,2,3) and numbered.fullmatch(b["text"].strip())]
-        captions = [i for i,b in enumerate(blocks) if b["table_index"] is None and b["outline"] not in (1,2,3)
-                    and (m := caption_match(b["text"], label)) and m.group(2) == name]
-        if len(heads) != 1 or len(captions) != 1:
-            errors.append("须有逐字同名的正文标题及唯一编号题注："+name)
+        candidates,problem=named_candidates(blocks,item,caption_match)
+        if problem:
+            errors.append(problem)
             continue
-        first, cap = heads[0], captions[0]
-        end = next((i for i in range(first+1,len(blocks)) if blocks[i]["outline"] in range(1,blocks[first]["outline"]+1)),len(blocks))
-        if not first < cap < end:
-            errors.append("题注不在同名章节目内："+name)
-            continue
-        candidates = [blocks[cap]]
-        for step in (-1, 1):
-            i = cap + step
-            while first < i < end:
-                b = blocks[i]
-                if b["text"].strip() or b["table_index"] is not None or b["drawing_count"]:
-                    candidates.append(b)
-                    break
-                i += step
         valid = (any(b["drawing_count"] for b in candidates) if label == "图" else
                  any(b["table_index"] is not None and any(any(c for c in row) for row in b["table_content"]) for b in candidates))
         if not valid:

@@ -24,12 +24,15 @@ from datetime import datetime
 from pathlib import Path
 
 import project_response
+import hard_checks
+import bid_requirements
+import submission_identity
 from visual_policy import visual_policy_errors, visual_policy_template
 from source_coverage import coverage_errors, response_errors, final_response_errors, state_basis, digest
 
 STATE_DEFAULT = "篇幅规划状态.json"
 DELIVERY_RESULT_DEFAULT = "流程交付结果.json"
-DELIVERY_RESULT_VERSION = 4
+DELIVERY_RESULT_VERSION = 6
 BODY_CITATION_COUNT_CHECK = "正文依据引用数量"
 STAGES = (40, 75)
 PAGE_DIR = None
@@ -138,6 +141,8 @@ def cmd_init(state_path: Path, force: bool):
             "status": "NOT_READY",
             "revision": 1,
             "project_response": project_response.template(),
+            "hard_checks": hard_checks.template(),
+            "bid_requirements": bid_requirements.template(),
             "requirements": [],
             "modules": [],
             "pilot_plan": {},
@@ -348,6 +353,7 @@ def cmd_checkpoint(
     note: str,
     document: Path,
     score_report_path: Path | None = None,
+    hard_review_path: Path | None = None,
 ):
     page_script, vals = discover_page_script()
     if page_script is None:
@@ -365,6 +371,21 @@ def cmd_checkpoint(
 
     errors = _rule_mismatch(state, page_script, vals)+startup_errors(state,state_path.parent)+production_errors(state,state_path.parent,vals["EXPECTED_BODY_PAGES"])+checkpoint_modules_errors(state,state_path.parent,stage,document)
     errors += stage_score_errors(state, document, stage, score_report_path)
+    hard_review_path = hard_review_path or document.with_suffix('.hard.json')
+    if not hard_review_path.is_file():
+        errors.append(f'{stage}%缺绑定当前合并稿的四项复核：{hard_review_path}')
+    else:
+        stage_review=load_state(hard_review_path)
+        figure_file=stage_review.get('word_report', {})
+        word=load_state(_resolve_record(figure_file['path'], hard_review_path.parent)) if fresh_file(figure_file,hard_review_path.parent) else {}
+        prefix=state['plan']['checkpoint_module_ids'][str(stage)]
+        errors += hard_checks.audit(state,state_path.parent,document,stage_review,load_format_audit(),word,prefix)
+        if not errors:
+            errors += bid_requirements.evidence_errors(state,document,stage_review,load_format_audit(),prefix)
+    if errors and str(stage) in state.get("checkpoints",{}):
+        state["checkpoints"][str(stage)]["status"]="FAIL"
+        state["gate"]["final_ready"]="BLOCKED"
+        save_state(state_path,state)
     if stage==75 and (state.get("checkpoints",{}).get("40",{}).get("status") not in ("PASS","PROVISIONAL")):
         errors.append("75%前必须完成40%校准")
     if errors:
@@ -425,6 +446,7 @@ def cmd_checkpoint(
         rc = 0 if within else 2
 
     cp = {
+        "hard_review": {"path":str(hard_review_path.resolve()), "sha256":sha256(hard_review_path)},
         "module_ids": selected,
         "module_source_hashes": {mid:state["module_registry"][mid]["source_sha256"] for mid in selected},
         "projected_final_body_pages": projected,
@@ -492,6 +514,8 @@ def cmd_final_ready(state_path: Path, document=None):
         if not isinstance(cp, dict):
             errors.append(f"缺少 {stage}% 阶段 checkpoint")
             continue
+        if not fresh_file(cp.get("hard_review",{}),state_path.parent):
+            errors.append(f"{stage}%四项复核记录缺失或已改变")
         snapshot_path = cp.get("snapshot_path")
         snapshot_fresh = fresh_file({"path": snapshot_path, "sha256": cp.get("document_sha256")}, state_path.parent)
         if not snapshot_fresh:
@@ -846,6 +870,10 @@ def delivery_result(a, errors, stage=None, citation_summary=None):
               'draft_delivery_allowed': not errors and stage == 'draft',
               'status': 'FAIL' if errors else ('PASS' if formal else ('LOCAL_REVIEW_ALLOWED' if a.mode == 'local-review' else 'DRAFT_READY')),
               'failures': errors, 'reports': reports}
+    if formal and a.review and a.review.is_file():
+        supplied=load_state(a.review).get("submission_pdf")
+        if supplied and (load_state(a.state).get("plan",{}).get("bid_requirements",{}).get("format",{}).get("deliverable")=="pdf"):
+            result["submission_pdf"]={"path":str(_resolve_record(supplied["path"],a.review.parent)),"sha256":supplied["sha256"]}
     if citation_summary is not None:
         result['body_citations'] = citation_summary
     if a.state.is_file():
@@ -863,12 +891,49 @@ def delivery_result(a, errors, stage=None, citation_summary=None):
         save_state(path, result)
     save_state(default_path, result)
     print('RESULT=' + str(path))
+    print("formal_release="+str(result["formal_release"]).lower())
     success = 'LOCAL_REVIEW_ALLOWED' if a.mode == 'local-review' else ('FINAL_DELIVERY_ALLOWED' if formal else 'DRAFT_DELIVERY_ALLOWED')
     return emit_gate(errors, success)
 
 
+def pdf_submission_errors(a,fmt,review):
+    import fitz
+    entry=review.get("submission_pdf",{})
+    if not fresh_file(entry,a.review.parent) or entry.get("document_sha256")!=sha256(a.document):
+        return ["最终PDF未绑定已审Word和实际PDF字节"]
+    path=_resolve_record(entry["path"],a.review.parent)
+    word=load_state(a.word_report)
+    exported=word.get("pdf") or {}
+    # Submit the actual PDF produced by Word, including when a newly beautified Word has been re-audited.
+    if path.suffix.lower()!=".pdf" or exported.get("sha256")!=sha256(path):
+        return ["最终PDF与本稿Word导出报告不一致"]
+    with fitz.open(path) as pdf:
+        if not len(pdf):
+            return ["实际提交PDF为空"]
+    return submission_identity.errors(path,fmt,review.get("identity",{}).get("pdf",{}))
+
+
 def cmd_delivery(a):
     digest=sha256(a.document)
+    if a.mode == 'full':
+        state=load_state(a.state)
+        review=load_state(a.review)
+        word=load_state(a.word_report)
+        problems=hard_checks.audit(state,a.state.parent,a.document,review,load_format_audit(),word)
+        if problems:
+            return delivery_result(a,problems)
+        problems=bid_requirements.plan_errors(state,a.state.parent)
+        if not problems:
+            problems+=bid_requirements.evidence_errors(state,a.document,review,load_format_audit())
+            fmt=state["plan"]["bid_requirements"]["format"]
+            rules=word.get("rules") or {}
+            if rules.get("submission_format","docx")!=fmt["deliverable"] or rules.get("tender_font_sizes",{})!=fmt["fonts"] or rules.get("visual_policy")!=state["startup"]["visual_policy"]:
+                problems.append("终稿字号或图件格式与招标核定计划不一致")
+            problems+=submission_identity.errors(a.document,fmt,review.get("identity",{}).get("docx",{}))
+            if fmt["deliverable"]=="pdf":
+                problems+=pdf_submission_errors(a,fmt,review)
+        if problems:
+            return delivery_result(a,problems)
     errors, review=validate_content_review(a.document,a.review)
     state=None
     page_script, vals=discover_page_script()
@@ -1087,7 +1152,7 @@ def planning_policy(target):
 def plan_hash(state):
     import hashlib
     plan={k:v for k,v in (state.get('plan') or {}).items() if k!='status'}
-    plan["_planning_rules"] = "r20"
+    plan["_planning_rules"] = "r22"
     if state.get('schema_version') == '3.2':
         plan['_source_coverage'] = (state.get('startup') or {}).get('source_coverage')
         plan['_source_scope'] = (state.get('startup') or {}).get('source_scope')
@@ -1138,6 +1203,9 @@ def module_requirements_digest(state,module,legacy=False):
 
 def module_review_errors(state,module,text,review,base):
     errors=technical_review_errors(review)
+    if state.get("plan",{}).get("bid_requirements"):
+        locations={"L"+str(i):line for i,line in enumerate(text.splitlines(),1)}
+        errors+=bid_requirements.module_evidence(state["plan"]["bid_requirements"],module["id"],locations,review.get("bid_evidence",{}))
     if state.get('schema_version') == '3.2':
         owned=[r for r in state['plan']['requirements'] if r['id'] in module.get('primary_for', [])]
         errors += response_errors(owned, (review.get('response_review') or {}).get('checks'), text)
@@ -1193,6 +1261,10 @@ def registry_errors(state,base,ids=None,document=None):
         if not fresh_file({'path':row.get('review_path'),'sha256':row.get('review_sha256')},base):
             errors.append('模块核查记录丢失或改变：'+mid)
         module=next((m for m in _modules(state) if m.get('id')==mid),None)
+        if module and any(x["module"]==mid for x in (state.get("plan",{}).get("hard_checks") or {}).get("measures",[])):
+            applicable=[x for x in state["plan"]["hard_checks"]["measures"] if x["module"]==mid]
+            if row.get("measures_basis")!=digest(applicable):
+                errors.append("适用措施或完成条件已变，须复核原模块："+mid)
         if row.get('review_contract') == REVIEW_CONTRACT and module and row.get('requirements_sha256') != module_requirements_digest(state,module,legacy=row.get('source_response_version') != 1):
             errors.append('模块评分/范围依据已改变，须定点复核：'+mid)
         if word_text is not None:
@@ -1201,7 +1273,7 @@ def registry_errors(state,base,ids=None,document=None):
                 errors.append('合并DOCX中缺少模块正文探针：'+mid)
             if fresh_file({'path':row.get('source_path'),'sha256':row.get('source_sha256')},base):
                 import re
-                raw=_manuscript(Path(row['source_path']))[0]
+                raw=_manuscript(_resolve_record(row['source_path'],base))[0]
                 content=re.sub(r'[^\w]','',raw)
                 actual=re.sub(r'[^\w]','',_manuscript(document)[0])
                 chunks=[content[i:i+100] for i in range(0,len(content),100)]
@@ -1238,6 +1310,8 @@ def effective_budget(state,base):
 
 def detailed_plan_errors(state,base,target):
     errors=[];p=state.get('plan') or {};mods=p.get('modules');reqs=p.get('requirements')
+    errors.extend(hard_checks.plan_errors(state,base))
+    errors.extend(bid_requirements.plan_errors(state,base))
     errors.extend(project_response.plan_errors(state, base, fresh_file))
     if type(p.get('revision')) is not int or p['revision']<1:errors.append('规划须有正整数revision')
     if not isinstance(reqs,list) or not reqs:
@@ -1431,6 +1505,8 @@ def cmd_module_checkpoint(state_path,mid,source_path,review_path):
                 elif cp.get('page_source')=='microsoft_word':
                     wr=cp.get('word_report') or {}
                     if not fresh_file({'path':wr.get('report_file'),'sha256':wr.get('report_sha256')},state_path.parent):errors.append(f'{stage}%阶段Word报告失效')
+                if "hard_checks" in state.get("plan",{}) and not fresh_file(cp.get("hard_review",{}),state_path.parent):
+                    errors.append(f'{stage}%四项复核已失效，不能推进新模块')
                 score = cp.get('score_report') or {}
                 if not fresh_file(score, state_path.parent):
                     errors.append(f'{stage}%阶段评分核验未完成或已失效，不能推进新模块')
@@ -1444,6 +1520,7 @@ def cmd_module_checkpoint(state_path,mid,source_path,review_path):
         if review.get(key) is not True:errors.append('模块实质复核缺项：'+key)
     if module:
         errors += module_review_errors(state,module,text,review,review_path.parent)
+        errors += hard_checks.module_errors(state,module,text,review,state_path.parent)
     if not review.get('conclusion'):errors.append('模块复核缺结论')
     if module and set(review.get('covered_requirement_ids') or [])!=set(module['requirement_ids']):errors.append('模块没有完成其评分/范围责任')
     quotes=review.get('probe_quotes') or []
@@ -1456,6 +1533,7 @@ def cmd_module_checkpoint(state_path,mid,source_path,review_path):
         if key!=mid and row.get('source_sha256')==sha256(source_path):errors.append('不同模块不能重复使用完全相同正文')
     if errors:return emit_gate(errors,'')
     state.setdefault('module_registry',{})[mid]={'status':'complete','source_path':str(source_path.resolve()),'source_sha256':sha256(source_path),
+        'measures_basis':digest([x for x in state.get('plan',{}).get('hard_checks',{}).get('measures',[]) if x['module']==mid]),
         'source_response_version':1 if state.get('schema_version') == '3.2' else 0,
         'review_contract':REVIEW_CONTRACT,'requirements_sha256':module_requirements_digest(state,module),
         'review_path':str(review_path.resolve()),'review_sha256':sha256(review_path),'normal_characters':normal_chars,'probe_quotes':quotes,'saved_at':now_iso()}
@@ -1560,6 +1638,8 @@ def cmd_next(state_path):
                                              for mid, value in cp.get('module_source_hashes', {}).items())
                                      and (cp.get('status') == 'PROVISIONAL' or fresh_file(
                                          {'path': word.get('report_file', ''), 'sha256': word.get('report_sha256')}, base)))
+                            if fresh and "hard_checks" in state.get("plan",{}):
+                                fresh=fresh_file(cp.get("hard_review",{}),base)
                             if fresh:
                                 fresh = not stage_score_errors(state, _resolve_record(cp['snapshot_path'], base), stage,
                                                                _resolve_record(score['path'], base))
@@ -1623,7 +1703,7 @@ def cmd_template(a):
                     **{k: False for k in ('fact_sources_reviewed', 'technical_depth_reviewed', 'interfaces_reviewed', 'repetition_reviewed')},
                     'conclusion': '', 'probe_quotes': ['', ''], 'technical_review': technical,
                     'construction_language_review': {'reviewed': False, 'unresolved_count': None, 'conclusion': ''},
-                    'response_review': {'checks': []}, 'scoring_review': {'conditions': [], 'conclusion': ''}}
+                    'measures': {}, 'bid_evidence': {}, 'response_review': {'checks': []}, 'scoring_review': {'conditions': [], 'conclusion': ''}}
             for rid in module['primary_for']:
                 data['response_review']['checks'].append({'requirement_id': rid, 'status': 'pending', 'conclusion': '',
                     'aspects': [{'expectation': x, 'location': '', 'quote': '', 'adequacy': 'pending', 'conclusion': ''}
@@ -1638,7 +1718,7 @@ def cmd_template(a):
         else:
             if not a.document:
                 raise RuntimeError('内容模板须提供--document')
-            data = {'document_sha256': sha256(a.document), 'technical_review': technical,
+            data = {'document_sha256': sha256(a.document), 'technical_review': technical, 'hard_checks': hard_checks.pending_review(), 'bid_evidence': {}, 'identity': {},
                     'source_checks': [{'item': x, 'status': 'pending', 'conclusion': '', 'evidence': []} for x in REVIEW_ITEMS],
                     'latest_confirmation': {'confirmed_at': '', 'reply_source': '', 'conclusion': ''},
                     'parameters': [], 'conflicts': [], 'section_heading_review': [],
@@ -1685,6 +1765,7 @@ def main():
     s.add_argument("--document", type=Path, required=True, help="实际阶段DOCX快照，必须与报告哈希一致")
     s.add_argument("--report", type=Path, default=None, help="本机Word或远程Runner实际产出的阶段报告")
     s.add_argument('--score-report', type=Path, required=True, help='绑定同一阶段稿的40/75评分核验报告')
+    s.add_argument("--hard-review",type=Path,help="阶段四项复核；默认与阶段稿同名.hard.json")
     s.add_argument("--actual-pages", type=float, default=None, help="仅 LibreOffice 临时估值时使用")
     s.add_argument("--engine", default="", help="临时估值时应为 libreoffice_estimate")
     s.add_argument("--allow-estimate", action="store_true")
@@ -1741,7 +1822,7 @@ def main():
                 a.allow_estimate,
                 a.note,
                 a.document,
-                a.score_report,
+                a.score_report, a.hard_review,
             )
         if a.command == "pilot":
             return cmd_pilot(a.state,a.document,a.report,a.analysis)

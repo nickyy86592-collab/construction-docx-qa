@@ -35,6 +35,7 @@ jobs:
         with:
           name: upgrade-word-test-input-${{ github.run_id }}
           path: audit/common/
+          retention-days: 14
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
@@ -42,6 +43,7 @@ jobs:
           path: |
             upgrade-portable.json
             table-portable.json
+          retention-days: 14
           if-no-files-found: error
   native-format-regression:
     needs: portable-regression
@@ -79,6 +81,7 @@ jobs:
             upgrade-${{ github.run_id }}/table-word.json
             upgrade-${{ github.run_id }}/word-table-evidence/**
             upgrade-${{ github.run_id }}/word-toc-evidence/**
+          retention-days: 14
           if-no-files-found: warn
 
 
