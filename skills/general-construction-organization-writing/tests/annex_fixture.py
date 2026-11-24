@@ -1,5 +1,7 @@
 """Isolated tender, resource plan and actual Word annex for the publishing regression."""
 from pathlib import Path
+import sys
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"scripts"))
 from docx import Document
 from bid_fixture import project_profile, fixture_capacity
 from test_hard_checks import case, write, flow, common, hc
@@ -62,5 +64,4 @@ def annex_case(base, incorrect=False):
 
 
 if __name__ == "__main__":
-    import sys
     annex_case(Path(sys.argv[1]), incorrect=True)
