@@ -1,7 +1,7 @@
 interface:
-  display_name: "通用施组编制（r22-泾县医院）"
+  display_name: "通用施组编制（r22.5-泾县医院）"
   short_description: "通用施组编制：分步推进、原资料响应、内容复核、阶段校准与Word交付验收"
-  default_prompt: "使用 $general-construction-organization-writing-r22（通用施组编制（r22-泾县医院））按本项目招标文件和报价清单编制或复核施工组织设计。"
+  default_prompt: "使用 $general-construction-organization-writing-r22-5（通用施组编制（r22.5-泾县医院））按本项目招标文件和报价清单编制或复核施工组织设计。"
   icon_small: "assets/icon.svg"
   icon_large: "assets/icon.svg"
 policy:

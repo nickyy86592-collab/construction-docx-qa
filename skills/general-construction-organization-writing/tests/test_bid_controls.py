@@ -16,7 +16,7 @@ import submission_identity as identity
 from test_hard_checks import case, common, flow, schedule_model, hc
 
 
-from bid_fixture import project_profile
+from bid_fixture import aerial_spec, profile_evidence, profile_text, project_profile
 
 class GateTests(unittest.TestCase):
     def setUp(self):
@@ -64,8 +64,10 @@ class GateTests(unittest.TestCase):
     def test_wrong_region_outdated_basis_and_source(self):
         rule={"source_id":"S","unit_id":"S:U000001","quote":"试件条款"}
         p=project_profile(rule,"M","R",[],[],[])
-        state={"startup":{"sources":[{"id":"S","role":"tender"}],"visual_policy":{}},
-               "plan":{"modules":[{"id":"M","primary_for":["R"]}],"requirements":[{"id":"R"}],"hard_checks":{"schedule":{"tasks":[]}}}}
+        state={"startup":{"sources":[{"id":"S","role":"tender"}],
+                          "visual_policy":{"additional_figures":{"names":[hc.AERIAL_FIGURE]}}},
+               "plan":{"modules":[{"id":"M","primary_for":["R"]}],"requirements":[{"id":"R"}],
+                       "hard_checks":{"schedule":{"tasks":[]},"figures":[aerial_spec("M")]}}}
         get=lambda source,unit:"试件条款"
         self.assertEqual(bid.validate_plan(state,p,get),[])
         for field,value in (("source",dict(rule,quote="其他条款")),("validity",dict(rule,effective_from="2025-01-01",effective_until="2026-01-01",status="有效"))):
@@ -76,8 +78,8 @@ class GateTests(unittest.TestCase):
 
     def test_qualification_and_condition_must_reach_manuscript(self):
         self.p["obligations"][0].update(topics=["岗位资格"],qualification="相应岗位证",verification_time="入场前")
-        loc={"L1":"试件操作标准 试件第1条 检查接口 班长 核对记录 复查接口后移交 场地受限 分时交接 逐段验收"}
-        rec={r["id"]:{k:"L1" for k in r} for r in [*self.p["decisions"],*self.p["obligations"]]}
+        loc={"L1":profile_text(self.p)}
+        rec=profile_evidence(self.p,"L1")
         self.assertTrue(any("qualification" in e for e in bid.module_evidence(self.p,"M",loc,rec)))
         loc["L1"]+=" 入场前核相应岗位证"
         self.assertFalse(bid.module_evidence(self.p,"M",loc,rec))
@@ -141,6 +143,54 @@ class GateTests(unittest.TestCase):
             self.assertEqual(result["failures"],expected)
             self.assertIs(result["formal_release"],False)
             self.assertFalse(out.exists())
+
+    def test_specialties_require_sourced_screening_at_preflight(self):
+        from annex_fixture import annex_case
+        state,_,_,doc=annex_case(self.base)
+        self.assertEqual(bid.plan_errors(state,doc.parent),[])
+        mutations=[
+            ("投标阶段实际踏勘",lambda p:p["site"]["visit"].clear()),
+            ("缺实际踏勘记录",lambda p:p["site"]["visit"].update(required=True,visit_record=p["site"]["visit"]["source"],decision="D1")),
+            ("出入口与运输通行",lambda p:p["site"]["conditions"].pop("出入口与运输通行")),
+            ("消防通行与疏散",lambda p:p["screening"].pop("消防通行与疏散")),
+            ("污废水",lambda p:p["screening"]["污废水"].update(applicable=True)),
+            ("工程重难点",lambda p:p["difficulties"]["items"][0].update(resources="按需配置")),
+            ("对应措施",lambda p:p["difficulties"]["items"][0].update(decision="unknown")),
+            ("现场航拍示意图",lambda p:p["aerial"].update(layout_path="")),
+        ]
+        for expected,mutate in mutations:
+            with self.subTest(expected=expected):
+                invalid=deepcopy(state)
+                mutate(invalid["plan"]["bid_requirements"])
+                errors=bid.plan_errors(invalid,doc.parent)
+                self.assertTrue(any(expected in e for e in errors),errors)
+
+    def test_named_difficulty_requires_response_and_exact_source(self):
+        from annex_fixture import annex_case
+        state,_,_,doc=annex_case(self.base)
+        p=state["plan"]["bid_requirements"]
+        ref=p["difficulties"]["source"]
+        name="试件操作标准"
+        p["difficulties"]["named"]=[{"name":name,"source":ref}]
+        self.assertTrue(any("点名项" in e for e in bid.plan_errors(state,doc.parent)))
+        p["decisions"].append(dict(p["decisions"][0],id="D2",condition="试件操作需先作接口试验"))
+        p["difficulties"]["items"].append(dict(p["difficulties"]["items"][0],name=name,origin="tender",decision="D2"))
+        self.assertEqual(bid.plan_errors(state,doc.parent),[])
+
+    def test_specialty_evidence_must_match_current_word_and_layout(self):
+        from annex_fixture import annex_case
+        state,review,_,doc=annex_case(self.base)
+        self.assertEqual(bid.evidence_errors(state,doc,review,common),[])
+        p=state["plan"]["bid_requirements"]
+        for row,field in (("D1","verification"),("D1","impact"),("O1","stage"),("O1","exception")):
+            with self.subTest(row=row,field=field):
+                stale=deepcopy(review)
+                stale["bid_evidence"][row].pop(field)
+                self.assertTrue(any(row+"/"+field in e for e in bid.evidence_errors(state,doc,stale,common)))
+        layout=doc.parent/p["aerial"]["layout_path"]
+        layout.write_bytes(b"changed layout")
+        self.assertTrue(any("总平面图版本" in e for e in bid.evidence_errors(state,doc,review,common)))
+        self.assertEqual(bid.evidence_errors(state,doc,review,common,[]),[])
 
     def test_tender_font_precedence(self):
         rules={"font_rules":{"body":{"size_pt":14}},"prompt_font_sizes":{"body":"五号"},"tender_font_sizes":{"body":"小四"}}

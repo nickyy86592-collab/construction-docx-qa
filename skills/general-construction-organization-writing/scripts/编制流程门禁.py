@@ -381,7 +381,7 @@ def cmd_checkpoint(
         prefix=state['plan']['checkpoint_module_ids'][str(stage)]
         errors += hard_checks.audit(state,state_path.parent,document,stage_review,load_format_audit(),word,prefix)
         if not errors:
-            errors += bid_requirements.evidence_errors(state,document,stage_review,load_format_audit(),prefix)
+            errors += bid_requirements.evidence_errors(state,document,stage_review,load_format_audit(),prefix,base=state_path.parent)
     if errors and str(stage) in state.get("checkpoints",{}):
         state["checkpoints"][str(stage)]["status"]="FAIL"
         state["gate"]["final_ready"]="BLOCKED"
@@ -924,7 +924,7 @@ def cmd_delivery(a):
             return delivery_result(a,problems)
         problems=bid_requirements.plan_errors(state,a.state.parent)
         if not problems:
-            problems+=bid_requirements.evidence_errors(state,a.document,review,load_format_audit())
+            problems+=bid_requirements.evidence_errors(state,a.document,review,load_format_audit(),base=a.state.parent)
             fmt=state["plan"]["bid_requirements"]["format"]
             rules=word.get("rules") or {}
             if rules.get("submission_format","docx")!=fmt["deliverable"] or rules.get("tender_font_sizes",{})!=fmt["fonts"] or rules.get("visual_policy")!=state["startup"]["visual_policy"]:
@@ -1152,7 +1152,7 @@ def planning_policy(target):
 def plan_hash(state):
     import hashlib
     plan={k:v for k,v in (state.get('plan') or {}).items() if k!='status'}
-    plan["_planning_rules"] = "r22"
+    plan["_planning_rules"] = "r22.5"
     if state.get('schema_version') == '3.2':
         plan['_source_coverage'] = (state.get('startup') or {}).get('source_coverage')
         plan['_source_scope'] = (state.get('startup') or {}).get('source_scope')

@@ -4,17 +4,31 @@ from decimal import Decimal, DecimalException
 from datetime import date
 import re
 
-from hard_checks import source_lookup, document_rows
-from source_coverage import resolve
+from hard_checks import AERIAL_FIGURE, source_lookup, document_rows
+from source_coverage import fresh, resolve
 import json
 from source_coverage import normal
+
+
+FIRE_TOPICS = ("动火防火","可燃物防火","临设防火","消防通行与疏散","消防水源与器材")
+ENVIRONMENT_TOPICS = ("扬尘","噪声与振动","污废水","固体废弃物")
+SCREENING_TOPICS = ("国家强制要求","属地监管要求","工艺","安全","岗位资格","危大工程","临电",
+                    *FIRE_TOPICS,*ENVIRONMENT_TOPICS)
+SITE_TOPICS = ("场地边界与作业面","出入口与运输通行","邻近设施与周边条件",
+               "地质与地下管线","专业勘察与补充勘探")
+SITE_CORE = SITE_TOPICS[:3]
+DIFFICULTY_FIELDS = ("name","cause","impact","resources")
+CONTROL_FIELDS = ("scope","stage","exception")
 
 
 def template():
     return {"jurisdiction": "", "as_of": "", "score_sources": {}, "format": {"source": {}, "fonts": {}, "pages": None,
             "color": "", "anonymous": None, "identifiers": [], "deliverable": "docx"},
             "screening": {}, "obligations": [], "decisions": [], "score_effects": {},
-            "annexes": {}, "crews": {}, "equipment": {}}
+            "annexes": {}, "crews": {}, "equipment": {},
+            "site": {"conditions": {}, "visit": {"required": None, "source": {}, "reason": ""}},
+            "difficulties": {"source": {}, "reason": "", "named": [], "items": []},
+            "aerial": {"layout_path": "", "layout_locator": "", "source": {}}}
 
 
 def meaningful(value):
@@ -67,7 +81,7 @@ def catalog_errors(plan, tasks):
 def plan_errors(state, base):
     p = state["plan"].get("bid_requirements")
     if not p:
-        return ["须按r22补录项目强制要求、格式、资源及附表；保留原项目状态"]
+        return ["须按r22.5补录项目强制要求、格式、资源、附表和四项专项计划；保留原项目状态"]
     lookup = source_lookup(state, base)
     try:
         errors=validate_plan(state, p, lookup)
@@ -82,7 +96,7 @@ def plan_errors(state, base):
                 errors.append(item["id"]+" 项目满分缺招标原文依据")
         return errors
     except (KeyError, TypeError, ValueError, IndexError, AttributeError, OSError, DecimalException) as exc:
-        return ["r22编前登记缺项或格式错误："+str(exc)]
+        return ["r22.5编前登记缺项或格式错误："+str(exc)]
 
 
 def validate_plan(state, p, lookup):
@@ -121,7 +135,7 @@ def validate_plan(state, p, lookup):
     for loc,tokens in f.get("permitted",{}).items():
         if not tokens or not set(tokens)<=set(f["identifiers"]) or not source_ok(f.get("permit_sources",{}).get(loc),lookup,tender):
             errors.append("非匿名区域例外缺具体允许条款："+loc)
-    for key in dict.fromkeys(["国家强制要求","属地监管要求","工艺","安全","岗位资格","危大工程","临电","扬尘",*p["screening"]]):
+    for key in dict.fromkeys([*SCREENING_TOPICS,*p["screening"]]):
         s=p["screening"].get(key,{})
         if type(s.get("applicable")) is not bool or not meaningful(s.get("reason")) or not source_ok(s.get("source"),lookup):
             errors.append("缺地域/工况筛查依据："+key)
@@ -137,7 +151,7 @@ def validate_plan(state, p, lookup):
         owner=next((m for m in state["plan"]["modules"] if m["id"]==row["module"]),{})
         if row["requirement"] not in owner.get("primary_for",[]):
             errors.append("项目措施与需求主响应位置不一致："+row["id"])
-    for key in dict.fromkeys(["国家强制要求","属地监管要求","工艺","安全","岗位资格","危大工程","临电","扬尘",*p["screening"]]):
+    for key in dict.fromkeys([*SCREENING_TOPICS,*p["screening"]]):
         if p["screening"].get(key,{}).get("applicable") is False and any(key in o["topics"] for o in p["obligations"]):
             errors.append("筛查与实际登记义务冲突："+key)
     for o in p["obligations"]:
@@ -163,6 +177,7 @@ def validate_plan(state, p, lookup):
     for d in p["decisions"]:
         if not all(meaningful(d.get(k)) for k in ("condition","choice","verification")):
             errors.append(d["id"]+" 缺限制条件、具体施工决定或核验办法")
+    errors+=specialty_plan_errors(state,p,lookup,tender)
     scoring={r["id"] for r in reqs.values() if r.get("scoring")}
     if set(p["score_effects"])!=scoring:
         errors.append("评分后果须逐项覆盖原评分子条件")
@@ -179,6 +194,85 @@ def validate_plan(state, p, lookup):
     for task in tasks:
         errors+=capacity_errors(task,p,lookup)
     return errors+catalog_errors(p,tasks)
+
+
+def specialty_plan_errors(state,p,lookup,tender):
+    errors=[]
+    decisions={d["id"]:d for d in p["decisions"]}
+    site=p.get("site",{})
+    conditions=site.get("conditions",{})
+    for name in SITE_TOPICS:
+        item=conditions.get(name,{})
+        status=item.get("status")
+        if (status not in ("confirmed","verify","not_applicable")
+                or (name in SITE_CORE and status=="not_applicable")
+                or not meaningful(item.get("reason")) or not source_ok(item.get("source"),lookup)):
+            errors.append("现场踏勘/勘察："+name+" 缺实际条件、适用判断或可回查依据")
+        elif status!="not_applicable" and item.get("decision") not in decisions:
+            errors.append("现场踏勘/勘察："+name+" 缺施工决定及核验责任")
+    visit=site.get("visit",{})
+    if (type(visit.get("required")) is not bool or not meaningful(visit.get("reason"))
+            or not source_ok(visit.get("source"),lookup,tender)):
+        errors.append("现场踏勘：缺对招标是否要求投标阶段实际踏勘的确认")
+    elif visit["required"] and (not source_ok(visit.get("visit_record"),lookup)
+            or visit["visit_record"]["source_id"] in tender or visit.get("decision") not in decisions):
+        errors.append("现场踏勘：招标要求实地踏勘，缺实际踏勘记录或响应模块")
+
+    diff=p.get("difficulties",{})
+    if not source_ok(diff.get("source"),lookup,tender) or not meaningful(diff.get("reason")):
+        errors.append("工程重难点：缺招标点名清单核查依据")
+    named=diff.get("named",[])
+    items=diff.get("items",[])
+    expected={normal(x["name"]) for x in named}
+    actual={normal(x["name"]) for x in items if x.get("origin")=="tender"}
+    if (len(expected)!=len(named) or expected!=actual or
+            any(not source_ok(x.get("source"),lookup,tender)
+                or normal(x["name"]) not in normal(x["source"]["quote"]) for x in named)):
+        errors.append("工程重难点：招标点名项未按原文逐项对应")
+    if not items or len({normal(x["name"]) for x in items})!=len(items) or len({x["decision"] for x in items})!=len(items):
+        errors.append("工程重难点：须逐项识别并落实相应措施，名称及责任决定须各自唯一")
+    if not any(x.get("origin")=="project" for x in items) and (
+            not meaningful(diff.get("project_reason")) or not source_ok(diff.get("project_source"),lookup)):
+        errors.append("工程重难点：未从本项目图纸、清单或现场识别风险，也无核查后的排除依据")
+    for item in items:
+        origin=item.get("origin")
+        if (origin not in ("tender","project") or not source_ok(item.get("source"),lookup,tender if origin=="tender" else None)
+                or item.get("decision") not in decisions or not all(meaningful(item.get(k)) for k in DIFFICULTY_FIELDS)):
+            errors.append("工程重难点："+str(item.get("name") or "未命名")+" 缺项目依据、成因、影响、资源或对应措施")
+
+    for row in p["obligations"]:
+        if set(row["topics"]).intersection((*FIRE_TOPICS,*ENVIRONMENT_TOPICS)):
+            if not all(meaningful(row.get(k)) for k in CONTROL_FIELDS):
+                errors.append(row["id"]+" 消防/环保控制缺作业或受影响对象、阶段、异常处置")
+
+    aerial=p.get("aerial",{})
+    figures=state["plan"]["hard_checks"].get("figures",[])
+    policy=state["startup"]["visual_policy"]
+    names=policy.get("additional_figures",{}).get("names",[])
+    figure=next((f for f in figures if f["name"]==AERIAL_FIGURE),{})
+    # A tender-named mandatory drawing can already reserve this exact title.
+    named_aerial=any(x["kind"]=="图" and x["name"]==AERIAL_FIGURE for x in policy.get("named_exhibits",[]))
+    if ((AERIAL_FIGURE not in names and not named_aerial) or figure.get("kind")!="site"
+            or "施工边界" not in figure.get("elements",[])):
+        errors.append(AERIAL_FIGURE+"：须登记为施工总平面派生空间图并纳入同稿图件硬审")
+    if not all(meaningful(aerial.get(k)) for k in ("layout_path","layout_locator")) or not source_ok(aerial.get("source"),lookup):
+        errors.append(AERIAL_FIGURE+"：缺项目总平面图路径、版位或相关项目依据")
+    return errors
+
+
+def aerial_evidence_errors(p,blocks,review,base):
+    aerial=p["aerial"]
+    record=review.get("hard_checks",{}).get("figures",{}).get(AERIAL_FIGURE,{})
+    trace=record.get("generation",{})
+    caption=re.compile(r"图\s*[1-9][0-9]*\s+"+re.escape(AERIAL_FIGURE))
+    errors=[]
+    if sum(bool(caption.fullmatch(b["text"].strip())) for b in blocks)!=1:
+        errors.append(AERIAL_FIGURE+"：本稿须有独立、连续编号的标准题注")
+    if (trace.get("method")!="ai_from_layout" or trace.get("layout_locator")!=aerial["layout_locator"]
+            or not meaningful(trace.get("record")) or trace.get("layout_sha256")==record.get("image_sha256")
+            or not fresh({"path":aerial["layout_path"],"sha256":trace.get("layout_sha256")},base)):
+        errors.append(AERIAL_FIGURE+"：缺AI生成过程、总平面图版本或位置的有效来源记录")
+    return errors
 
 
 def capacity_errors(task,p,lookup):
@@ -407,6 +501,7 @@ def check_table(name,table,a,p,tasks):
 
 def module_evidence(p,mid,locations,record):
     errors=[]
+    difficulties={x["decision"]:x for x in p.get("difficulties",{}).get("items",[])}
     for row in [*p["decisions"],*p["obligations"]]:
         if row["module"]!=mid:
             continue
@@ -416,22 +511,31 @@ def module_evidence(p,mid,locations,record):
             errors.append(row["id"]+" 未界定实际工况或适用地域")
         if "qualification" in fields and row.get("person_confirmed") is True and not row.get("person_proof"):
             errors.append(row["id"]+" 无拟派人资格依据")
+        values=row
+        if row["id"] in difficulties:
+            values={**row,**difficulties[row["id"]]}
+            fields+=DIFFICULTY_FIELDS
+        if set(row.get("topics",[])).intersection((*FIRE_TOPICS,*ENVIRONMENT_TOPICS)):
+            fields+=CONTROL_FIELDS
         for field in fields:
             loc=record.get(row["id"],{}).get(field,"")
-            if not meaningful(row.get(field)) or normal(row[field]) not in normal(locations.get(loc,"")):
+            if not meaningful(values.get(field)) or normal(values[field]) not in normal(locations.get(loc,"")):
                 errors.append(f"{row['id']}/{field} 缺本稿实际位置或施工引文")
     return errors
 
 
-def evidence_errors(state,document,review,common,selected=None):
+def evidence_errors(state,document,review,common,selected=None,*,base=None):
     errors=[]
     p=state["plan"]["bid_requirements"]
     blocks=common._docx_blocks(document)
     locations=document_rows(blocks)
     evidence=review.get("bid_evidence",{})
     modules=set(selected if selected is not None else (m["id"] for m in state["plan"]["modules"]))
-    tasks=state["plan"]["hard_checks"]["schedule"]["tasks"]
-    for mid in modules:
+    spec=state["plan"]["hard_checks"]
+    if any(f["name"]==AERIAL_FIGURE and f["module"] in modules for f in spec["figures"]):
+        errors+=aerial_evidence_errors(p,blocks,review,base if base is not None else document.parent)
+    tasks=spec["schedule"]["tasks"]
+    for mid in sorted(modules):
         errors+=module_evidence(p,mid,locations,evidence)
     for t in tasks:
         if t["module"] not in modules:

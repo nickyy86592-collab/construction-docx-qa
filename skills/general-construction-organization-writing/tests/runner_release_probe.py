@@ -25,10 +25,11 @@ def run(root, action):
         raise ValueError(action)
     result=json.loads((project/"流程交付结果.json").read_text("utf-8"))
     print(json.dumps(result,ensure_ascii=False))
-    assert result["failures"]==["劳动力计划表 第2行第2列 应为「4」，实为「2」"],result["failures"]
+    assert result["failures"]==["现场航拍示意图：缺AI生成过程、总平面图版本或位置的有效来源记录",
+                               "劳动力计划表 第2行第2列 应为「4」，实为「2」"],result["failures"]
     assert result["status"]=="FAIL" and result["formal_release"] is False and result["task_complete"] is False
     assert not list((root/"formal").glob("*"))
-    print("EXPECTED_ANNEX_CELL_MISMATCH_ONLY; formal_release=false; PUBLISHED_FILES=0")
+    print("EXPECTED_AERIAL_PROVENANCE_AND_ANNEX_CELL_FAILURES; formal_release=false; PUBLISHED_FILES=0")
 
 
 if __name__=="__main__":

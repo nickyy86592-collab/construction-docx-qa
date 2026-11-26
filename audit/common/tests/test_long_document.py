@@ -80,8 +80,11 @@ def start_case(target=395,tol=5,front=1):
    'schedule':{'tasks':[{'id':'A','name':'场地交接','unit':'段','module':last,'crews':['crew'],
         'equipment':[],'materials':[],'equipment_basis':'人工交接','materials_basis':'现场核查',
         'ready':{},'after':[],'quantity':1,'rate':1,'start':1,'finish':1,'windows':[[1,8,9]],'basis':'fixture sample'}]}}
- from bid_fixture import project_profile,fixture_capacity
+ from bid_fixture import aerial_spec,project_profile,fixture_capacity
  s['plan']['bid_requirements']=project_profile({'source_id':sid,'unit_id':first,'quote':CATALOG},last,reqs[-1]['id'],[reqs[0]['id']],['S1'],['crew'])
+ s['startup']['visual_policy']=copy.deepcopy(s['startup']['visual_policy'])
+ s['startup']['visual_policy']['additional_figures']={'names':[f.hard_checks.AERIAL_FIGURE],'reason':'synthetic aerial project view'}
+ s['plan']['hard_checks']['figures'].append(aerial_spec(last))
  s['plan']['hard_checks']['schedule']['tasks'][0].update(productivity_basis='核验接口工效',capacity=fixture_capacity({'source_id':sid,'unit_id':first,'quote':CATALOG},['crew']))
  f.save_state(state_path,s)
  return state_path,s
@@ -128,7 +131,8 @@ def module_files(m):
  q2=('模块'+mid+'发现检查偏差时，按批准方案处理并复查，满足移交条件后进入后续工序，保留相应记录。')*2
  text=q1+'\n'+q2+'\n';text+=('本模块'+mid+'施工执行记录用于控制工序及接口。\n')*max(1,int((m['estimated_normal_chars']-len(f._normal(text)))/24))
  if mid==s['plan']['modules'][-1]['id']:
-  text+='试件操作标准 试件第1条 检查接口 班长 核对记录 复查接口后移交 场地受限 分时交接 逐段验收。\n'
+  from bid_fixture import profile_text
+  text+=profile_text(s['plan']['bid_requirements'])+'\n'
  src=BASE/(mid+'.md');src.write_text(text)
  rv=BASE/(mid+'-review.json');write(rv,{'module_id':mid,'source_sha256':f.sha256(src),'covered_requirement_ids':m['requirement_ids'],'fact_sources_reviewed':True,'technical_depth_reviewed':True,'interfaces_reviewed':True,'repetition_reviewed':True,'conclusion':'synthetic review','technical_review':{'version':1,'checks':{k:{'status':'reviewed','conclusion':'fixture'} for k in f.TECHNICAL_REVIEW_ITEMS}},'construction_language_review':{'reviewed':True,'unresolved_count':0,'conclusion':'synthetic language judgment'},'scoring_review':{'conditions':[],'not_applicable_reason':'fixture requirements only; no tender scoring conditions','conclusion':'synthetic responsibility judgment'},'probe_quotes':[q1,q2]})
  data=json.loads(rv.read_text());requirements={r['id']:r for r in s['plan']['requirements']}
@@ -141,7 +145,8 @@ def module_files(m):
  if mid==s['plan']['modules'][-1]['id']:
   loc='L'+str(len(text.splitlines()))
   p=s['plan']['bid_requirements']
-  data['bid_evidence']={r['id']:{k:loc for k in r} for r in p['obligations']+p['decisions']}
+  from bid_fixture import profile_evidence
+  data['bid_evidence']=profile_evidence(p,loc)
   data['measures']={'交接':{k:{'loc':'L1','quote':'材料报审及设备进场完成后','finding':'synthetic module evidence'} for k in f.hard_checks.ASPECTS}}
  write(rv,data)
  return src,rv,[q1,q2]

@@ -10,6 +10,7 @@ import schedule
 from source_coverage import inventory
 from visual_policy import base_names
 
+AERIAL_FIGURE = "现场航拍示意图"
 ASPECTS=("工序","触发","做法","标准","异常")
 ELEMENTS={"site":{"作业区","出入口","路线","空间关系","临设"},
           "network":{"关键活动","依赖关系"}, "gantt":{"关键活动","作业时段"}, "other":set()}
