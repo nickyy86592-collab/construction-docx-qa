@@ -334,7 +334,7 @@ class SourceCoverageTests(unittest.TestCase):
             batch_plan={'count':1,'reason':'synthetic small scope','batches':['whole']},
             word_channel='unavailable',word_capability_evidence='synthetic portable test; no Word',real_photo_slots=[],
             visual_policy={'version':1,'real_photos':{'decision':'schematic','reason':'synthetic narrow road','replacement_figures':['施工接口示意']},
-                           'color_figures':{'mode':'color'},'additional_figures':{'names':['施工接口示意'],'reason':'synthetic interface'}})
+                           'color_figures':{'mode':'color'},'additional_figures':{'names':['施工接口示意','现场航拍示意图'],'reason':'synthetic interface'}})
         self.state['plan'].update(revision=1,chapter_plan=[{'chapter':'第一章 施工安排'}],
             modules=[{'id':'M','chapter':'第一章 施工安排','section':'第一节 施工组织',
                 'scope':'synthetic technical scope','basis':'synthetic score and source mapping',
@@ -360,7 +360,8 @@ class SourceCoverageTests(unittest.TestCase):
                 for n,k in flow.hard_checks.required_figures(self.state).items()],
             'measures':[{'id':'标线','module':'M','requirement':self.req[0]['id'],'basis':'试件招标条件','completion':'实测标线厚度'}],
             'schedule':{'tasks':[{'id':'A','module':'M'}]},'gaps':[]}
-        from bid_fixture import project_profile,fixture_capacity
+        from bid_fixture import aerial_spec,project_profile,fixture_capacity
+        plan['hard_checks']['figures'].append(aerial_spec("M"))
         ref=self.req[0]['source_refs'][0]
         self.state['plan']['bid_requirements']=project_profile(ref,"M",self.req[0]["id"],[self.req[0]["id"]],["Q1"],["施工班"])
         self.state['plan']['hard_checks']['schedule']['tasks'][0].update(crews=["施工班"],equipment=[],rate=1,unit="项",capacity=fixture_capacity(ref,["施工班"]),productivity_basis="试件工作面单班操作")

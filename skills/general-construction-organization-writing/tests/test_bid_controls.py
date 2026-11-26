@@ -192,6 +192,18 @@ class GateTests(unittest.TestCase):
         self.assertTrue(any("总平面图版本" in e for e in bid.evidence_errors(state,doc,review,common)))
         self.assertEqual(bid.evidence_errors(state,doc,review,common,[]),[])
 
+    def test_aerial_failure_alone_blocks_formal_publishing(self):
+        import json
+        import release_docx
+        from annex_fixture import annex_case
+        _,_,_,doc=annex_case(self.base,incorrect_aerial=True)
+        out=self.base/"formal"/"design.docx"
+        self.assertNotEqual(release_docx.release(doc.parent,self.base/"reports",out),0)
+        result=json.loads((doc.parent/"流程交付结果.json").read_text("utf-8"))
+        self.assertEqual(result["failures"],["现场航拍示意图：缺AI生成过程、总平面图版本或位置的有效来源记录"])
+        self.assertIs(result["formal_release"],False)
+        self.assertFalse(out.exists())
+
     def test_tender_font_precedence(self):
         rules={"font_rules":{"body":{"size_pt":14}},"prompt_font_sizes":{"body":"五号"},"tender_font_sizes":{"body":"小四"}}
         self.assertEqual(common.effective_font_settings(rules)["font_rules"]["body"]["size_pt"],12)
