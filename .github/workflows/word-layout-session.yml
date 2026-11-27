@@ -20,7 +20,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: word-layout-scripts-${{ github.run_id }}
-          path: bridge/word_layout.ps1
+          path: |
+            bridge/word_layout.ps1
+            bridge/render_word.py
+            audit/common/prepare_python.ps1
           retention-days: 1
           if-no-files-found: error
   word:
@@ -34,7 +37,9 @@ jobs:
           path: relay-${{ github.run_id }}
       - name: Publish this run's ephemeral public key
         shell: powershell
-        run: ./relay-${{ github.run_id }}/word_layout.ps1 -Mode offer
+        run: |
+          & ./relay-${{ github.run_id }}/audit/common/prepare_python.ps1
+          & ./relay-${{ github.run_id }}/bridge/word_layout.ps1 -Mode offer
       - uses: actions/upload-artifact@v4
         with:
           name: word-layout-receiver-${{ github.run_id }}
@@ -45,7 +50,7 @@ jobs:
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./relay-${{ github.run_id }}/word_layout.ps1 -Mode measure
+        run: ./relay-${{ github.run_id }}/bridge/word_layout.ps1 -Mode measure
       - uses: actions/upload-artifact@v4
         with:
           name: word-layout-proof-${{ github.run_id }}
