@@ -116,59 +116,13 @@ try {
             [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $docs $entry.FullName))
         }
     } finally { $zip.Dispose() }
-    $word = New-Object -ComObject Word.Application
-    $word.Visible = $false
-    $word.DisplayAlerts = 0
-    $word.AutomationSecurity = 3
-    $records = @()
-    foreach ($file in (Get-ChildItem -LiteralPath $docs -File | Sort-Object Name)) {
-        $doc = $null
-        try {
-            $sourceHash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            $doc = $word.Documents.Open($file.FullName, $false, $false, $false)
-            $doc.Repaginate()
-            foreach ($toc in $doc.TablesOfContents) { $toc.Update() }
-            $doc.Repaginate()
-            foreach ($toc in $doc.TablesOfContents) { $toc.UpdatePageNumbers() }
-            $doc.Repaginate()
-            $last = $doc.Range([Math]::Max(0,$doc.Content.End-2),[Math]::Max(0,$doc.Content.End-2))
-            $end = [int]$last.Information(3)
-            $pages = [int]$doc.ComputeStatistics(2)
-            $start = if ($doc.Bookmarks.Exists('review_start')) { [int]$doc.Bookmarks.Item('review_start').Range.Information(3) } else { 0 }
-            $tocPages = @()
-            foreach ($toc in $doc.TablesOfContents) {
-                $first = $doc.Range($toc.Range.Start,$toc.Range.Start)
-                $final = $doc.Range([Math]::Max($toc.Range.Start,$toc.Range.End-2),[Math]::Max($toc.Range.Start,$toc.Range.End-2))
-                $tocPages += @([int]$first.Information(3),[int]$final.Information(3))
-            }
-            $saved = Join-Path $out $file.Name
-            $pdf = Join-Path $out ($file.BaseName + '.pdf')
-            $doc.RemoveDocumentInformation(8)
-            $doc.SaveAs2($saved,16)
-            $doc.Repaginate()
-            $doc.ExportAsFixedFormat($pdf,17)
-            $records += [ordered]@{
-                file = $file.Name
-                source_sha256 = $sourceHash
-                document_sha256 = (Get-FileHash -LiteralPath $saved -Algorithm SHA256).Hash.ToLowerInvariant()
-                pdf_sha256 = (Get-FileHash -LiteralPath $pdf -Algorithm SHA256).Hash.ToLowerInvariant()
-                physical_pages = $pages
-                last_content_page = $end
-                first_body_page = $start
-                toc_pages = $tocPages
-                tables = [int]$doc.Tables.Count
-                inline_shapes = [int]$doc.InlineShapes.Count
-            }
-        } finally {
-            if ($null -ne $doc) { $doc.Close(0) }
-        }
-    }
-    [ordered]@{run_id=$env:GITHUB_RUN_ID;engine="Microsoft Word $($word.Version)";documents=$records} |
-        ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $out 'layout.json') -Encoding UTF8
+    Write-Output "REQUEST_READY"
+    & $env:AUDIT_PYTHON (Join-Path $PSScriptRoot 'render_word.py') $docs $out
+    if ($LASTEXITCODE -ne 0) { throw 'Microsoft Word pagination failed' }
     $outputZip = Join-Path $work 'proof.zip'
     [IO.Compression.ZipFile]::CreateFromDirectory($out, $outputZip)
     [IO.File]::WriteAllBytes((Join-Path $work 'proof.bin'), (Protect-Packet ([IO.File]::ReadAllBytes($outputZip)) 'out' $true))
-    Write-Output ("Microsoft Word pagination completed. Documents=" + $records.Count)
+    Write-Output "Encrypted output ready"
 } finally {
     if ($null -ne $word) { $word.Quit() }
     $rsa.Dispose()
