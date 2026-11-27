@@ -1,33 +1,60 @@
-name: Isolated Word layout check
+name: Isolated Microsoft Word layout
 on:
   push:
     branches: [word-layout-session-d9d7e27d]
-    paths: ['.github/workflows/word-layout-session.yml']
+    paths: ['bridge/start/**']
 permissions:
   contents: read
+concurrency:
+  group: isolated-word-layout
+  cancel-in-progress: false
 jobs:
-  connection:
+  transport:
     if: github.actor == 'nickyy86592-collab'
-    runs-on: [self-hosted, Windows, X64, word-audit]
+    runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
-      - name: Check actual Word pagination
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: word-layout-scripts-${{ github.run_id }}
+          path: bridge/word_layout.ps1
+          retention-days: 1
+          if-no-files-found: error
+  word:
+    needs: transport
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 16
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: word-layout-scripts-${{ github.run_id }}
+          path: relay-${{ github.run_id }}
+      - name: Publish this run's ephemeral public key
+        shell: powershell
+        run: ./relay-${{ github.run_id }}/word_layout.ps1 -Mode offer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: word-layout-receiver-${{ github.run_id }}
+          path: ${{ runner.temp }}/word-layout-${{ github.run_id }}/receiver.json
+          retention-days: 1
+          if-no-files-found: error
+      - name: Measure and save with Microsoft Word
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./relay-${{ github.run_id }}/word_layout.ps1 -Mode measure
+      - uses: actions/upload-artifact@v4
+        with:
+          name: word-layout-proof-${{ github.run_id }}
+          path: ${{ runner.temp }}/word-layout-${{ github.run_id }}/proof.bin
+          retention-days: 1
+          if-no-files-found: error
+      - name: Remove temporary files
+        if: always()
         shell: powershell
         run: |
-          $ErrorActionPreference = 'Stop'
-          $word = $null
-          $doc = $null
-          try {
-            $word = New-Object -ComObject Word.Application
-            $word.DisplayAlerts = 0
-            $doc = $word.Documents.Add()
-            $doc.Content.Text = 'Word pagination check'
-            $doc.Repaginate()
-            $pages = [int]$doc.ComputeStatistics(2)
-            if ($pages -ne 1) { throw 'Unexpected sample page count' }
-            Write-Output "WORD_VERSION=$($word.Version) SAMPLE_PAGES=$pages"
-          }
-          finally {
-            if ($null -ne $doc) { $doc.Close(0) }
-            if ($null -ne $word) { $word.Quit() }
-          }
+          $directory = Join-Path $env:RUNNER_TEMP ("word-layout-" + $env:GITHUB_RUN_ID)
+          if (Test-Path -LiteralPath $directory) { Remove-Item -LiteralPath $directory -Recurse -Force }
