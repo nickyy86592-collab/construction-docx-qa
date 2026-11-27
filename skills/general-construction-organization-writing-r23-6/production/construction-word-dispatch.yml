@@ -1,0 +1,36 @@
+name: 施工组织设计公开送审入口
+on:
+  workflow_dispatch:
+    inputs:
+      drive_file:
+        description: 私有收稿文件的 Drive ID
+        required: true
+        type: string
+      packet_sha256:
+        description: 冻结包的 SHA-256
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  forward:
+    if: ${{ github.event.repository.private == false && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    environment: construction-dispatch
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Forward the private file reference
+        env:
+          CONSTRUCTION_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          CONSTRUCTION_DEFAULT_REF: refs/heads/${{ github.event.repository.default_branch }}
+          CONSTRUCTION_PRODUCTION_REPO: ${{ secrets.CONSTRUCTION_PRODUCTION_REPO }}
+          CONSTRUCTION_PRODUCTION_BRANCH: ${{ secrets.CONSTRUCTION_PRODUCTION_BRANCH }}
+          CONSTRUCTION_FORWARD_TOKEN: ${{ secrets.CONSTRUCTION_FORWARD_TOKEN }}
+          CONSTRUCTION_REQUEST_FILE: ${{ inputs.drive_file }}
+          CONSTRUCTION_REQUEST_HASH: ${{ inputs.packet_sha256 }}
+        run: python3 -I .github/construction/forward_request.py

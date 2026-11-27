@@ -1,0 +1,30 @@
+{
+  "skill_version": "r23.6",
+  "based_on": "r23",
+  "source_package_sha256": "8f47f7717077545cddde872861d7752ea4767e3eb1ccd27491c99694c16d8817",
+  "submission_modes": [
+    "whole",
+    "review-points"
+  ],
+  "page_template": "scripts/项目页数硬审（10评审点）.py",
+  "audit_files": {
+    "scripts/Word正式交付硬审（不含页数）.py": "a20e3589bd95b416a8b995b0a61cbcf1fb57fe3ed3ed0de826aa065e331ad52b",
+    "scripts/bid_requirements.py": "a4bbe5a37621d288eef7350282dfc611e7ba421e99c07c6e2e32557f13a78e9e",
+    "scripts/boq.py": "750694dc788f96d91c24db7821fd22c5f0807049eaec7504044596e2c5e44091",
+    "scripts/hard_checks.py": "30a464636d20bf6ab6e12abfefc42ad77cc6387cc5760599dbef933b2dd61bd6",
+    "scripts/project_page_rules.py": "7275ff64d2034f2a475c9c54b5bd6d5e5013a6caa2137ac8f7bc99b47909d46f",
+    "scripts/project_response.py": "0198fb7f54a670859fd6fa3b1eb507019cc047a39964e69ae075893f32c679c9",
+    "scripts/release_docx.py": "32a0b5270d414c5807511a6204ddb7c2734e691f6ebd875017fea8a629bd44cc",
+    "scripts/release_task.py": "d687327f0400fa845b9bf7db235caee37584a7f57cbee5f6bdb2043fe1c11872",
+    "scripts/schedule.py": "ddc3bf6ccad5a058fed1ae44ade2403a77fcf73974af29a5b18c130b1fa95c45",
+    "scripts/source_coverage.py": "f7652ebea2283d9c10ad444898eb9d9214a21bfd89337639977038c40c4fa05b",
+    "scripts/split_submission.py": "2c66c0d15dd32b54bbf476e8ff58c11e3b3736d7e6e89c4c7cf904434b87e7cf",
+    "scripts/submission_identity.py": "b0fd97e6655795f50be8fbdeba1d3f8c2c3a4f625bc3981dae2edb70271f4f4c",
+    "scripts/visual_policy.py": "42dcedebc67cc6a518e5fe306fa8953f3ad3986db3d6d047993bad4734b9a35d",
+    "scripts/word_native.py": "81c3c2d94614926512441a975809d59e32d8f34e32832c9228a6ce0a83e86fe1",
+    "scripts/编制流程门禁.py": "19f213a39a45d13bf87ef99d8d00262247f0555fbd9f0d2b390f277075ecb1ee",
+    "scripts/评分响应核验.py": "f13d34cdf2c3acd4b35d78c091342bcbf965b70555bbb7b421cbe052c46ff69f",
+    "scripts/项目页数硬审（10评审点）.py": "e9acd0b2abf9629a42e2ca2f0f6e917b8867ffed521de51a25c370534ced80f3"
+  },
+  "audit_sha256": "2fde2edba67b9e66cee325afbd16ea077015f6048f94fa2ee14dfdcbd93e928f"
+}

@@ -1,0 +1,67 @@
+name: 施工组织设计版本化送审和发布
+on:
+  workflow_dispatch:
+    inputs:
+      drive_file:
+        description: 已登记私有收稿目录内冻结包的 Drive ID
+        required: true
+        type: string
+      packet_sha256:
+        description: 本次任务压缩包的 SHA-256
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: construction-release-${{ inputs.drive_file }}
+  cancel-in-progress: false
+
+jobs:
+  production-entry:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify production repository and revision
+        env:
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          DEFAULT_REF: refs/heads/${{ github.event.repository.default_branch }}
+          FILE_ID: ${{ inputs.drive_file }}
+          PACKET_HASH: ${{ inputs.packet_sha256 }}
+        run: |
+          set -eu
+          test "$REPOSITORY_PRIVATE" = true
+          test "$GITHUB_REF" = "$DEFAULT_REF"
+          [[ "$FILE_ID" =~ ^[A-Za-z0-9_-]+$ ]]
+          [[ "$PACKET_HASH" =~ ^[0-9a-f]{64}$ ]]
+
+  word-and-release:
+    needs: production-entry
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    environment: construction-production
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Load Windows audit dependencies
+        shell: powershell
+        run: |
+          python -m pip install --disable-pip-version-check -r review-runtime/requirements.txt
+          exit $LASTEXITCODE
+      - name: Exercise the actual private Word route and run this exact batch
+        shell: powershell
+        env:
+          CONSTRUCTION_PRIVATE_REPOSITORY: ${{ github.event.repository.private }}
+          CONSTRUCTION_DRIVE_AUTHOR_OAUTH: ${{ secrets.CONSTRUCTION_DRIVE_AUTHOR_OAUTH }}
+          CONSTRUCTION_DRIVE_PUBLISHER_OAUTH: ${{ secrets.CONSTRUCTION_DRIVE_PUBLISHER_OAUTH }}
+          CONSTRUCTION_SIGNING_KEY: ${{ secrets.CONSTRUCTION_SIGNING_KEY }}
+          CONSTRUCTION_REQUEST_FILE: ${{ inputs.drive_file }}
+          CONSTRUCTION_REQUEST_HASH: ${{ inputs.packet_sha256 }}
+        run: |
+          python -X utf8 review-runtime/runner_release.py run --drive-file "$env:CONSTRUCTION_REQUEST_FILE" --packet-sha256 "$env:CONSTRUCTION_REQUEST_HASH"
+          exit $LASTEXITCODE
+

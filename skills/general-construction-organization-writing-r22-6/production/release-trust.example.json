@@ -1,0 +1,11 @@
+{
+  "repository": "OWNER/PRIVATE-PRODUCTION-REPO",
+  "branch": "main",
+  "public_key": "填写Ed25519公钥的Base64",
+  "drive": {
+    "inbox": "INBOX_FOLDER_ID",
+    "evidence": "EVIDENCE_FOLDER_ID",
+    "staging": "PUBLISHER_ONLY_FOLDER_ID",
+    "formal": "FORMAL_FOLDER_ID"
+  }
+}

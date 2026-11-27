@@ -1,0 +1,27 @@
+{
+  "skill_version": "r22.6",
+  "based_on": "r22.5",
+  "source_package_sha256": "dc117d03d26789ea50e09b4c3bfdbca67f55176063e25b253820fc600942ba8e",
+  "submission_modes": [
+    "whole"
+  ],
+  "page_template": "scripts/泾县医院页数硬审.py",
+  "audit_files": {
+    "scripts/Word正式交付硬审（不含页数）.py": "4f05779a0896bf2514e58c037a7e492aff1d499850ed0c75f651ee75a71022a8",
+    "scripts/bid_requirements.py": "4ed5eb8d86acb177f0128fc5a13a2f70860b19fdbabc47ad5bc3f61257938e3a",
+    "scripts/boq.py": "750694dc788f96d91c24db7821fd22c5f0807049eaec7504044596e2c5e44091",
+    "scripts/hard_checks.py": "49e6efd153311a20f3fb87b604b889719d4298a7b5410d4696081bf903cfc943",
+    "scripts/project_response.py": "c6b0413872820e2eb78b515ec3edca9e788e73422ee673fc56b43daa3dc90919",
+    "scripts/release_docx.py": "32a0b5270d414c5807511a6204ddb7c2734e691f6ebd875017fea8a629bd44cc",
+    "scripts/release_task.py": "d687327f0400fa845b9bf7db235caee37584a7f57cbee5f6bdb2043fe1c11872",
+    "scripts/schedule.py": "ddc3bf6ccad5a058fed1ae44ade2403a77fcf73974af29a5b18c130b1fa95c45",
+    "scripts/source_coverage.py": "f7652ebea2283d9c10ad444898eb9d9214a21bfd89337639977038c40c4fa05b",
+    "scripts/submission_identity.py": "b0fd97e6655795f50be8fbdeba1d3f8c2c3a4f625bc3981dae2edb70271f4f4c",
+    "scripts/visual_policy.py": "42dcedebc67cc6a518e5fe306fa8953f3ad3986db3d6d047993bad4734b9a35d",
+    "scripts/word_native.py": "81c3c2d94614926512441a975809d59e32d8f34e32832c9228a6ce0a83e86fe1",
+    "scripts/泾县医院页数硬审.py": "8993c180e73d714b74bcb9d1c5b3695f811f68c77dd30ef644126deb0680405b",
+    "scripts/编制流程门禁.py": "587e146f85053d906e43e0c95ef715494eee689b963369022ccc45178f8cdd64",
+    "scripts/评分响应核验.py": "f13d34cdf2c3acd4b35d78c091342bcbf965b70555bbb7b421cbe052c46ff69f"
+  },
+  "audit_sha256": "925cff4b7b3eb78ccb5811bf0a27f671d24838b4344b4a778f0fe2320216b59f"
+}

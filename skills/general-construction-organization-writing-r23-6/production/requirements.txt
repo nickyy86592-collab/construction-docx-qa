@@ -1,0 +1,7 @@
+cryptography>=42
+pywin32>=306
+PyMuPDF>=1.26,<2
+pypdf>=5
+openpyxl>=3.1
+xlrd>=2
+Pillow>=10

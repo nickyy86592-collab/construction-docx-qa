@@ -1,0 +1,6 @@
+interface:
+  display_name: "通用施组编制（r23.6-10点×10页）"
+  short_description: "按10个评审点编制施组并逐项执行Word页数硬审与正式交付验收"
+  default_prompt: "使用 $general-construction-organization-writing-r23-6 按招标原文编制施工组织设计，规划10个评审点并逐项完成Word页数硬审。"
+  icon_small: "assets/icon.svg"
+  icon_large: "assets/icon.svg"
