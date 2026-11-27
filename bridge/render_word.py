@@ -12,21 +12,6 @@ from win32com.client import DispatchEx
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
-def sanitize_metadata(file_path):
-    clean = file_path.with_suffix(".clean")
-    with ZipFile(file_path) as source, ZipFile(clean, "w") as target:
-        for entry in source.infolist():
-            data = source.read(entry)
-            if entry.filename in ("docProps/core.xml", "docProps/app.xml"):
-                root = ET.fromstring(data)
-                names = {"creator", "lastModifiedBy", "Company", "Manager", "HyperlinkBase", "Template"}
-                for child in list(root):
-                    if child.tag.rsplit("}", 1)[-1] in names:
-                        root.remove(child)
-                data = ET.tostring(root, encoding="utf-8", xml_declaration=True)
-            target.writestr(entry,data)
-    clean.replace(file_path)
-
 def measure(word, source, target):
     saved = target / source.name
     pdf = saved.with_suffix(".pdf")
@@ -42,11 +27,11 @@ def measure(word, source, target):
             toc.UpdatePageNumbers()
         doc.Repaginate()
         print("TOC_END", flush=True)
+        doc.RemovePersonalInformation = True
         doc.SaveAs2(str(saved), FileFormat=12, AddToRecentFiles=False)
         print("SAVE_END", flush=True)
     finally:
         doc.Close(False)
-    sanitize_metadata(saved)
     doc = word.Documents.Open(str(saved), ReadOnly=True, AddToRecentFiles=False)
     try:
         doc.Repaginate()
