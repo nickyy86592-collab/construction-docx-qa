@@ -13,29 +13,50 @@ permissions:
 
 concurrency:
   group: versioned-word-acceptance
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  native-word:
+  synthetic-code:
     if: github.repository == 'nickyy86592-collab/construction-docx-qa'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: versioned-word-synthetic-code-${{ github.run_id }}
+          path: |
+            audit/common/prepare_python.ps1
+            automation/versioned-word-acceptance/verify.py
+            skills/general-construction-organization-writing-r22-6/release-profile.json
+            skills/general-construction-organization-writing-r22-6/scripts/
+            skills/general-construction-organization-writing-r22-6/production/
+            skills/general-construction-organization-writing-r23-6/release-profile.json
+            skills/general-construction-organization-writing-r23-6/scripts/
+            skills/general-construction-organization-writing-r23-6/production/
+          retention-days: 1
+          if-no-files-found: error
+
+  native-word:
+    needs: synthetic-code
     runs-on: [self-hosted, Windows, X64, word-audit]
     timeout-minutes: 15
     env:
       PYTHONUTF8: '1'
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/download-artifact@v4
         with:
-          persist-credentials: false
-          sparse-checkout: |
-            audit/common
-            automation/versioned-word-acceptance
-            skills/general-construction-organization-writing-r22-6
-            skills/general-construction-organization-writing-r23-6
+          name: versioned-word-synthetic-code-${{ github.run_id }}
+          path: versioned-word-${{ github.run_id }}
       - name: Prepare Windows Word COM dependencies
         shell: powershell
-        run: audit/common/prepare_python.ps1
+        working-directory: versioned-word-${{ github.run_id }}
+        run: ./audit/common/prepare_python.ps1
       - name: Verify exact versions and actual Word pages
         shell: powershell
+        working-directory: versioned-word-${{ github.run_id }}
         run: |
           & $env:AUDIT_PYTHON -X utf8 automation/versioned-word-acceptance/verify.py
           exit $LASTEXITCODE
