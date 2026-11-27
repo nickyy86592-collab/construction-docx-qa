@@ -1,0 +1,41 @@
+name: Versioned synthetic Windows Word acceptance
+on:
+  push:
+    branches: [release-r22.6-r23.6]
+    paths:
+      - '.github/workflows/versioned-word-acceptance.yml'
+      - 'automation/versioned-word-acceptance/**'
+      - 'skills/general-construction-organization-writing-r22-6/**'
+      - 'skills/general-construction-organization-writing-r23-6/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: versioned-word-acceptance
+  cancel-in-progress: false
+
+jobs:
+  native-word:
+    if: github.repository == 'nickyy86592-collab/construction-docx-qa'
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            audit/common
+            automation/versioned-word-acceptance
+            skills/general-construction-organization-writing-r22-6
+            skills/general-construction-organization-writing-r23-6
+      - name: Prepare Windows Word COM dependencies
+        shell: powershell
+        run: audit/common/prepare_python.ps1
+      - name: Verify exact versions and actual Word pages
+        shell: powershell
+        run: |
+          & $env:AUDIT_PYTHON -X utf8 automation/versioned-word-acceptance/verify.py
+          exit $LASTEXITCODE
