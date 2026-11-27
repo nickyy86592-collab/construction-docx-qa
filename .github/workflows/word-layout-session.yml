@@ -1,0 +1,33 @@
+name: Isolated Word layout check
+on:
+  push:
+    branches: [word-layout-session-d9d7e27d]
+    paths: ['.github/workflows/word-layout-session.yml']
+permissions:
+  contents: read
+jobs:
+  connection:
+    if: github.actor == 'nickyy86592-collab'
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 4
+    steps:
+      - name: Check actual Word pagination
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $word = $null
+          $doc = $null
+          try {
+            $word = New-Object -ComObject Word.Application
+            $word.DisplayAlerts = 0
+            $doc = $word.Documents.Add()
+            $doc.Content.Text = 'Word pagination check'
+            $doc.Repaginate()
+            $pages = [int]$doc.ComputeStatistics(2)
+            if ($pages -ne 1) { throw 'Unexpected sample page count' }
+            Write-Output "WORD_VERSION=$($word.Version) SAMPLE_PAGES=$pages"
+          }
+          finally {
+            if ($null -ne $doc) { $doc.Close(0) }
+            if ($null -ne $word) { $word.Quit() }
+          }
