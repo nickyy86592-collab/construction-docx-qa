@@ -7,7 +7,7 @@ permissions:
   contents: read
 concurrency:
   group: isolated-word-layout
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   transport:
     if: github.actor == 'nickyy86592-collab'
@@ -26,7 +26,7 @@ jobs:
   word:
     needs: transport
     runs-on: [self-hosted, Windows, X64, word-audit]
-    timeout-minutes: 16
+    timeout-minutes: 9
     steps:
       - uses: actions/download-artifact@v4
         with:
