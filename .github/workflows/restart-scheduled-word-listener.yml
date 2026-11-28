@@ -1,0 +1,21 @@
+name: Restart the scheduled Windows Word listener
+on:
+  push:
+    branches: [restore-word-runner-20261128]
+    paths: [.github/workflows/restart-scheduled-word-listener.yml]
+permissions:
+  contents: read
+concurrency:
+  group: manual-windows-word-listener-restart
+  cancel-in-progress: false
+jobs:
+  restart:
+    if: github.actor == 'nickyy86592-collab' && github.repository == 'nickyy86592-collab/construction-docx-qa'
+    runs-on: [self-hosted, Windows, X64, word-audit]
+    timeout-minutes: 4
+    steps:
+      - name: Request the existing scheduled task to start
+        shell: cmd
+        run: |
+          schtasks.exe /Run /TN ConstructionDocxQaWordProduction
+          exit /b %ERRORLEVEL%
